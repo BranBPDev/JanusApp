@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-# Modo carpeta (onedir): arranque rápido y listo para librerías pesadas (numpy, trimesh, open3d...).
+# Un único .exe (onefile): no genera carpetas auxiliares junto al ejecutable.
 
 a = Analysis(
     ['main.py'],
@@ -21,21 +21,13 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
+    a.binaries,
+    a.datas,
     [],
-    exclude_binaries=True,
     name='JanusApp',
     debug=False,
     strip=False,
     upx=False,
     console=False,
     icon='app/assets/logo.ico',
-)
-
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.datas,
-    strip=False,
-    upx=False,
-    name='JanusApp',
 )

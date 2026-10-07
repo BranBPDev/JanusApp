@@ -18,8 +18,8 @@ function Log([string]$Message) {
 
 # Reintenta (antivirus / handles aún abiertos pueden bloquear archivos unos instantes).
 function Retry([scriptblock]$Action) {
-    for ($i = 1; $i -le 10; $i++) {
-        try { & $Action; return } catch { if ($i -eq 10) { throw }; Start-Sleep -Milliseconds 500 }
+    for ($i = 1; $i -le 20; $i++) {
+        try { & $Action; return } catch { if ($i -eq 20) { throw }; Start-Sleep -Milliseconds 500 }
     }
 }
 

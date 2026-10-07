@@ -58,7 +58,7 @@ jobs:
         run: |
           $out = "release_build"
           New-Item -ItemType Directory -Force -Path "$out/app/data" | Out-Null
-          Copy-Item -Path "dist/JanusApp/*" -Destination $out -Recurse -Force
+          Copy-Item -Path "dist/JanusApp.exe" -Destination $out -Force
           Copy-Item -Path "version.json" -Destination "$out/app/data/version.json"
           Compress-Archive -Path "$out/*" -DestinationPath "JanusApp.zip" -Force
 
