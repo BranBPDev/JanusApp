@@ -4,8 +4,8 @@ import urllib.request
 from pathlib import Path
 from app.utils.callback_util import invoke_progress
 
-HEADERS = {"User-Agent": "JanusApp-Updater", "Accept": "*/*"}
-CHUNK = 64 * 1024
+HEADERS = {"User-Agent": "JanusApp-Updater", "Accept": "*/*", "Accept-Encoding": "identity"}
+CHUNK = 512 * 1024
 
 
 def http_get(url: str, timeout: float = 6.0) -> bytes:

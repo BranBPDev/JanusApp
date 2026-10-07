@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
+from app.gui.shape_page import ShapePage
 from app.utils.paths_util import APP_NAME, LOGO_PNG
 from app.utils.update_util import get_local_info
 
@@ -99,7 +100,8 @@ class MainWindow(QMainWindow):
             button.setCursor(Qt.PointingHandCursor)
             self.nav.addButton(button, index)
             side.addWidget(button)
-            self.stack.addWidget(HomePage(info) if key == "home" else PlaceholderPage(text))
+            page = HomePage(info) if key == "home" else ShapePage() if key == "shape" else PlaceholderPage(text)
+            self.stack.addWidget(page)
         self.nav.idClicked.connect(self.stack.setCurrentIndex)
         self.nav.button(0).setChecked(True)
 

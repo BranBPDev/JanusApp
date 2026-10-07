@@ -1,16 +1,16 @@
 {
     "configs": {
-        "tag": "v0.0.1",
-        "name": "JanusApp v0.0.1",
-        "description": "Aplicación base con interfaz gráfica y sistema de autoactualización.",
+        "tag": "v0.0.2",
+        "name": "JanusApp v0.0.2",
+        "description": "Generación de modelos 3D a partir de las vistas 2D.",
         "prerelease": false,
         "make_latest": true,
         "branch": "main"
     },
     "userjson": {
         "name": "JanusApp",
-        "version": "0.0.1",
-        "releaseDate": "2026-10-07",
+        "version": "0.0.2",
+        "releaseDate": "2026-10-08",
         "author": "BranBP",
         "repository": "https://github.com/BranBPDev/JanusApp"
     }

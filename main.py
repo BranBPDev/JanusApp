@@ -1,6 +1,7 @@
+import os
 import sys
 import ctypes
-from app.utils.logger_util import get_logger, install_excepthook
+from app.utils.logger_util import get_logger, install_excepthook, shutdown_logs
 
 log = get_logger("SYSTEM")
 APP_ID = "BranBP.JanusApp"
@@ -32,7 +33,8 @@ def main():
 
     code = qt_app.exec()
     log.info(f"--- FIN DE APLICACIÓN (código {code}) ---")
-    sys.exit(code)
+    shutdown_logs()
+    os._exit(code)  # cierre inmediato aunque haya un hilo de trabajo activo
 
 
 if __name__ == "__main__":
