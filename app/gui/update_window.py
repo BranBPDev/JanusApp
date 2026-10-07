@@ -66,8 +66,11 @@ class UpdateWindow(QWidget):
         self.bar.setValue(int(fraction * _STEPS))
         self.detail.setText(message)
 
-    def finish(self):
+    def allow_close(self):
         self._can_close = True
+
+    def finish(self):
+        self.allow_close()
         self.close()
 
     def closeEvent(self, event):

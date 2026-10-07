@@ -1,3 +1,5 @@
+import os
+
 from PySide6.QtCore import QTimer
 
 from app.gui.main_window import MainWindow
@@ -37,4 +39,8 @@ class AppManager:
     def _on_restart(self):
         self.log.info("Cerrando para completar la actualización.")
         self.update_window.set_progress(1.0, "Reiniciando aplicación...")
-        QTimer.singleShot(1000, self.qt_app.quit)
+        # Sin esto, quit() envía closeEvent a la ventana de actualización, que lo ignora, y la app nunca se cierra.
+        self.update_window.allow_close()
+        QTimer.singleShot(800, self.qt_app.quit)
+        # Garantía: si algo impide el cierre limpio, se termina el proceso para que el script pueda reemplazar archivos.
+        QTimer.singleShot(3000, lambda: os._exit(0))
