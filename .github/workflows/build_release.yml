@@ -60,7 +60,8 @@ jobs:
           New-Item -ItemType Directory -Force -Path "$out/app/data" | Out-Null
           Copy-Item -Path "dist/JanusApp.exe" -Destination $out -Force
           Copy-Item -Path "version.json" -Destination "$out/app/data/version.json"
-          Compress-Archive -Path "$out/*" -DestinationPath "JanusApp.zip" -Force
+          # El .exe ya está comprimido por PyInstaller: sin compresión extra el zip se crea y descomprime mucho más rápido.
+          Compress-Archive -Path "$out/*" -DestinationPath "JanusApp.zip" -CompressionLevel NoCompression -Force
 
       - name: 🚀 Publicar en GitHub
         uses: softprops/action-gh-release@v2

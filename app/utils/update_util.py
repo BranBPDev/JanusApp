@@ -10,11 +10,11 @@ from app.utils.callback_util import invoke_progress
 from app.utils.download_util import download_file, http_get
 from app.utils.json_util import parse_json, read_json
 from app.utils.logger_util import get_logger, shutdown_logs
+from app.utils.zip_util import unzip_file
 from app.utils.paths_util import (
     APP_NAME, BASE_DIR, DOWNLOAD_FOLDER, EXE_PATH, IS_FROZEN, LATEST_ZIP_URL, MAIN_LOG_PATH,
     REMOTE_VERSION_JSON, STAGING_DIR, TEMP_ZIP_PATH, UPDATE_SCRIPT, USER_DATA_DIRS, VERSION_JSON,
 )
-from app.utils.zip_util import unzip_file
 
 log = get_logger("UPDATER")
 
@@ -75,7 +75,7 @@ def check_for_update() -> Optional[UpdateInfo]:
 
 
 def _launch_updater():
-    """Copia el script a %TEMP% y lo lanza desvinculado: espera al cierre, reemplaza archivos y relanza."""
+    """Copia el script a %TEMP% y lo lanza desvinculado: espera al cierre, reemplaza el .exe y relanza."""
     script = os.path.join(tempfile.gettempdir(), "janus_update.ps1")
     shutil.copyfile(UPDATE_SCRIPT, script)
 
@@ -89,7 +89,6 @@ def _launch_updater():
         "-LogPath", str(MAIN_LOG_PATH),
         "-Keep", ",".join(d.name for d in USER_DATA_DIRS),
     ]
-    # Sin variables de PyInstaller para que la app relanzada arranque limpia.
     env = {k: v for k, v in os.environ.items() if not k.startswith(("_MEIPASS", "_PYI"))}
     log.info(f"PID actual: {os.getpid()} | Lanzando script de actualización: {script}")
     shutdown_logs()
@@ -100,7 +99,7 @@ def _launch_updater():
 
 
 def perform_update(progress_callback=None):
-    """Descarga + descomprime + lanza el reemplazo. Tras volver, la app debe cerrarse. Lanza excepción si falla."""
+    """Descarga el zip del release, lo descomprime y lanza el reemplazo. Lanza excepción si falla."""
     if not IS_FROZEN:
         raise RuntimeError("La actualización solo está disponible en el ejecutable compilado.")
 

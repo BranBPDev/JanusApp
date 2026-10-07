@@ -34,7 +34,7 @@ LOGO_PNG = ASSETS_DIR / "logo.png"
 LOGO_ICO = ASSETS_DIR / "logo.ico"
 UPDATE_SCRIPT = ASSETS_DIR / "scripts" / "update.ps1"
 
-# En el .exe la versión viaja en app/data; en desarrollo se lee del version.json de la raíz.
+# En el .exe la versión viaja en app/data (dentro del zip del release); en desarrollo se lee del version.json de la raíz.
 VERSION_JSON = DATA_DIR / "version.json" if IS_FROZEN else BASE_DIR / "version.json"
 
 # --- Actualización ---
