@@ -1,0 +1,78 @@
+name: Build and Release JanusApp
+
+on:
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - 'testing/**'
+      - '**.md'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: 📥 Checkout Código
+        uses: actions/checkout@v4
+
+      - name: 🐍 Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: 📦 Instalar Dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 🏷️ Extraer Configuración del Release
+        shell: pwsh
+        run: |
+          $json = Get-Content version.json -Raw | ConvertFrom-Json
+          $c = $json.configs
+          @(
+            "TAG=$($c.tag)",
+            "REL_NAME=$($c.name)",
+            "DESC=$($c.description)",
+            "PRE=$($c.prerelease.ToString().ToLower())",
+            "LATEST=$($c.make_latest.ToString().ToLower())"
+          ) | Add-Content -Path $env:GITHUB_ENV
+
+          # version.json limpio (solo 'userjson') para el usuario
+          $json.userjson | ConvertTo-Json | Out-File "version.json" -Encoding utf8
+          Write-Host "[LOG] Release $($c.tag) configurado."
+
+      - name: 🔨 Compilar EXE (PyInstaller)
+        run: pyinstaller --clean --noconfirm JanusApp.spec
+
+      - name: 🗂️ Preparar ZIP Final
+        shell: pwsh
+        run: |
+          $out = "release_build"
+          New-Item -ItemType Directory -Force -Path "$out/app/data" | Out-Null
+          Copy-Item -Path "dist/JanusApp/*" -Destination $out -Recurse -Force
+          Copy-Item -Path "version.json" -Destination "$out/app/data/version.json"
+          Compress-Archive -Path "$out/*" -DestinationPath "JanusApp.zip" -Force
+
+      - name: 🚀 Publicar en GitHub
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          name: ${{ env.REL_NAME }}
+          body: ${{ env.DESC }}
+          prerelease: ${{ env.PRE == 'true' }}
+          make_latest: ${{ env.LATEST == 'true' }}
+          files: |
+            JanusApp.zip
+            version.json
+          overwrite: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

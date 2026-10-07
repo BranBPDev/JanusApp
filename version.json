@@ -1,0 +1,17 @@
+{
+    "configs": {
+        "tag": "v0.0.1",
+        "name": "JanusApp v0.0.1",
+        "description": "Aplicación base con interfaz gráfica y sistema de autoactualización.",
+        "prerelease": false,
+        "make_latest": true,
+        "branch": "main"
+    },
+    "userjson": {
+        "name": "JanusApp",
+        "version": "0.0.1",
+        "releaseDate": "2026-10-07",
+        "author": "BranBP",
+        "repository": "https://github.com/BranBPDev/JanusApp"
+    }
+}
