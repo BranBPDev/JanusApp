@@ -27,7 +27,7 @@ def _err(q, x, y, z):
 
 
 def _best(q, pa, pb, eps):
-    """Posición óptima de colapso y su coste (error cuádrico + pequeña penalización por longitud)."""
+    """Posición óptima de colapso y su error: distancia cuadrática media a los planos originales (+ penalización mínima por longitud)."""
     mid = ((pa[0] + pb[0]) * 0.5, (pa[1] + pb[1]) * 0.5, (pa[2] + pb[2]) * 0.5)
     l2 = (pa[0] - pb[0]) ** 2 + (pa[1] - pb[1]) ** 2 + (pa[2] - pb[2]) ** 2
     cands = (tuple(pa), tuple(pb), mid)
@@ -47,16 +47,16 @@ def _best(q, pa, pb, eps):
         c = _err(q, p[0], p[1], p[2])
         if best is None or c < best_c:
             best, best_c = p, c
-    return max(best_c, 0.0) + eps * l2, list(best)
+    return max(best_c, 0.0) / max(tr, 1e-30) + eps * l2, list(best)
 
 
-def decimate(V: np.ndarray, F: np.ndarray, target_faces: int, progress=None):
-    """Simplificación por colapso de aristas con error cuádrico (Garland-Heckbert)."""
-    if len(F) <= target_faces:
-        return V.copy(), F.copy()
-
-    Qn, mean_area = _vertex_quadrics(V, F)
-    eps = 1e-3 * mean_area
+def decimate(V: np.ndarray, F: np.ndarray, max_error: float, min_faces: int = 24, progress=None, locked=None, return_map=False):
+    """Simplificación por colapso de aristas con error cuádrico (Garland-Heckbert).
+    Se detiene cuando el siguiente colapso supera 'max_error' (distancia media a la superficie original).
+    'locked': índices de vértices que no se pueden mover ni eliminar (bordes que deben seguir coincidiendo)."""
+    Qn, _ = _vertex_quadrics(V, F)
+    eps = 1e-3
+    limit = max_error * max_error
     P = V.astype(np.float64).tolist()
     Fl = F.tolist()
     Q = [tuple(r) for r in Qn.tolist()]
@@ -67,6 +67,9 @@ def decimate(V: np.ndarray, F: np.ndarray, target_faces: int, progress=None):
         vf[b].add(fi)
         vf[c].add(fi)
 
+    is_locked = [False] * len(V)
+    for i in (locked if locked is not None else []):
+        is_locked[int(i)] = True
     alive = [True] * len(Fl)
     valive = [True] * n
     ver = [0] * n
@@ -105,12 +108,23 @@ def decimate(V: np.ndarray, F: np.ndarray, target_faces: int, progress=None):
         return (n0[0] * n1[0] + n0[1] * n1[1] + n0[2] * n1[2]) < 0.1 * l0 * l1
 
     faces_left = len(Fl)
-    start = faces_left
     steps = 0
-    while faces_left > target_faces and heap:
+    while faces_left > min_faces and heap:
         cost, a, b, va, vb, pos = heapq.heappop(heap)
+        if cost > limit:
+            break
         if not (valive[a] and valive[b]) or ver[a] != va or ver[b] != vb:
             continue
+        if is_locked[a] and is_locked[b]:
+            continue
+        if is_locked[b]:
+            a, b = b, a
+        if is_locked[a]:  # solo se puede colapsar sobre el vértice fijo: se recalcula el error real de esa posición
+            pos = list(P[a])
+            q = tuple(x + y for x, y in zip(Q[a], Q[b]))
+            l2 = sum((P[a][k] - P[b][k]) ** 2 for k in range(3))
+            if _err(q, pos[0], pos[1], pos[2]) / max(q[0] + q[4] + q[7], 1e-30) + eps * l2 > limit:
+                continue
         shared = vf[a] & vf[b]
         if not shared:
             continue
@@ -140,7 +154,13 @@ def decimate(V: np.ndarray, F: np.ndarray, target_faces: int, progress=None):
 
         steps += 1
         if progress and steps % 256 == 0:
-            progress((start - faces_left) / max(1, start - target_faces))
+            progress(min(1.0, (cost / limit) ** 0.5))
 
     keep = [i for i, ok in enumerate(alive) if ok]
-    return compact(np.asarray(P, np.float64), np.asarray([Fl[i] for i in keep], np.int32))
+    faces = np.asarray([Fl[i] for i in keep], np.int32)
+    verts = np.asarray(P, np.float64)
+    used = np.unique(faces)
+    remap = np.full(len(verts), -1, np.int64)
+    remap[used] = np.arange(len(used))
+    out = (verts[used], remap[faces].astype(np.int32))
+    return (*out, remap) if return_map else out

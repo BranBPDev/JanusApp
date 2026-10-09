@@ -4,7 +4,7 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 
-from app.shape.export import write_glb, write_obj
+from app.shape.export import texture_png, write_glb, write_obj
 from app.shape.pipeline import ShapeParams, ShapeResult
 from app.utils.paths_util import PROJECTS_DIR
 
@@ -20,7 +20,7 @@ def project_dir(name: str) -> Path:
 
 
 def save_shape(name: str, view_paths: dict, params: ShapeParams, result: ShapeResult) -> Path:
-    """Guarda vistas, mallas (GLB + OBJ por LOD) y manifest.json. Conserva el estado de las demás fases."""
+    """Guarda vistas, un GLB por LOD, el OBJ/MTL/textura del LOD0 y manifest.json (conserva las demás fases)."""
     root = project_dir(name)
     views_dir, shape_dir = root / "views", root / "shape"
     views_dir.mkdir(parents=True, exist_ok=True)
@@ -36,14 +36,20 @@ def save_shape(name: str, view_paths: dict, params: ShapeParams, result: ShapeRe
             shutil.copyfile(src, dest)
         views[key] = f"views/{dest.name}"
 
-    for old in shape_dir.glob("lod*"):
+    for old in shape_dir.iterdir():
         old.unlink()
     lods = []
-    for i, mesh in enumerate(result.lods):
-        write_glb(shape_dir / f"lod{i}.glb", mesh.vertices, mesh.faces, mesh.normals, name)
-        write_obj(shape_dir / f"lod{i}.obj", mesh.vertices, mesh.faces, mesh.normals, name)
-        lods.append({"level": i, "glb": f"shape/lod{i}.glb", "obj": f"shape/lod{i}.obj",
-                     "triangles": mesh.triangles, "vertices": len(mesh.vertices)})
+    for i, model in enumerate(result.lods):
+        write_glb(shape_dir / f"lod{i}.glb", model, name)
+        lods.append({"level": i, "glb": f"shape/lod{i}.glb", "triangles": model.triangles,
+                     "vertices": model.vertex_count})
+    lod0 = result.lods[0]
+    write_obj(shape_dir / "lod0.obj", lod0, name)
+    if lod0.texture is not None:
+        (shape_dir / "texture.png").write_bytes(texture_png(lod0.texture))
+
+    parts = [{"name": p.name, "parent": p.parent, "origin": list(p.origin), "axis": list(p.axis) if p.axis else None,
+              "open_angle_deg": p.open_angle} for p in lod0.parts]
 
     manifest_path = root / "manifest.json"
     manifest = {}
@@ -57,8 +63,8 @@ def save_shape(name: str, view_paths: dict, params: ShapeParams, result: ShapeRe
         "name": name,
         "updated": datetime.now().isoformat(timespec="seconds"),
         "views": views,
-        "shape": {"lods": lods, "params": vars(params), **result.info},
-        "phases": {p: bool(phases.get(p, False)) for p in PHASES} | {"shape": True},
+        "shape": {"parts": parts, "lods": lods, "params": vars(params), **result.info},
+        "phases": {p: bool(phases.get(p, False)) for p in PHASES} | {"shape": True, "texture": lod0.texture is not None},
     })
     manifest_path.write_text(json.dumps(manifest, indent=4, ensure_ascii=False), encoding="utf-8")
     return root

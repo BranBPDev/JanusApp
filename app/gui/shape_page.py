@@ -5,7 +5,7 @@ from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices, QFontMetrics, QPixmap
 from PySide6.QtWidgets import (
     QAbstractSpinBox, QButtonGroup, QCheckBox, QDoubleSpinBox, QFileDialog, QFrame, QHBoxLayout, QLabel,
-    QLineEdit, QProgressBar, QPushButton, QScrollArea, QSlider, QSpinBox, QVBoxLayout, QWidget,
+    QLineEdit, QProgressBar, QPushButton, QScrollArea, QSlider, QVBoxLayout, QWidget,
 )
 
 from app.gui.viewer import MeshViewer
@@ -97,41 +97,28 @@ class ViewSlot(QFrame):
                 break
 
 
-class SliderRow(QWidget):
-    def __init__(self, text, lo, hi, value, step=1, tip=""):
-        super().__init__()
-        self.step = step
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
-        label = QLabel(text)
-        label.setFixedWidth(100)
-        self.slider = QSlider(Qt.Horizontal)
-        self.slider.setRange(lo // step, hi // step)
-        self.slider.setValue(value // step)
-        self.value_label = QLabel(alignment=Qt.AlignRight | Qt.AlignVCenter)
-        self.value_label.setFixedWidth(34)
-        self.slider.valueChanged.connect(lambda v: self.value_label.setText(str(v * step)))
-        self.value_label.setText(str(value))
-        for w in (label, self.slider):
-            w.setToolTip(tip)
-        lay.addWidget(label)
-        lay.addWidget(self.slider, 1)
-        lay.addWidget(self.value_label)
-
-    def value(self) -> int:
-        return self.slider.value() * self.step
-
-
 def _row(text, widget, tip=""):
     box = QWidget()
     lay = QHBoxLayout(box)
     lay.setContentsMargins(0, 0, 0, 0)
     label = QLabel(text)
-    label.setFixedWidth(100)
+    label.setFixedWidth(80)
     label.setToolTip(tip)
     widget.setToolTip(tip)
     lay.addWidget(label)
     lay.addWidget(widget, 1)
+    return box
+
+
+def _meters(value, maximum=1000.0, special=None):
+    box = QDoubleSpinBox()
+    box.setRange(0.0 if special else 0.01, maximum)
+    box.setDecimals(2)
+    box.setValue(value)
+    box.setSuffix(" m")
+    box.setButtonSymbols(QAbstractSpinBox.NoButtons)
+    if special:
+        box.setSpecialValueText(special)
     return box
 
 
@@ -165,7 +152,7 @@ class ShapePage(QWidget):
         lay = QVBoxLayout(panel)
         lay.setContentsMargins(0, 0, 14, 0)
         lay.setSpacing(12)
-        lay.addWidget(QLabel("Generar forma 3D", objectName="Title"))
+        lay.addWidget(QLabel("Generar objeto 3D", objectName="Title"))
         lay.addWidget(QLabel("Carga las vistas ortográficas del objeto.", objectName="Subtitle"))
 
         self.name_edit = QLineEdit("objeto")
@@ -183,34 +170,12 @@ class ShapePage(QWidget):
         vlay.addWidget(load_multi)
         lay.addWidget(views_card)
 
-        params_card, play = _card("PARÁMETROS")
-        self.resolution = SliderRow("Resolución", 48, 192, 96, 8, "Detalle del volumen. Más alto = más preciso y más lento.")
-        self.smooth = SliderRow("Suavizado", 0, 20, 6, 1, "Iteraciones de suavizado de la malla.")
-        play.addWidget(self.resolution)
-        play.addWidget(self.smooth)
-        self.triangles = QSpinBox()
-        self.triangles.setRange(100, 100000)
-        self.triangles.setValue(3000)
-        self.triangles.setSingleStep(500)
-        self.triangles.setButtonSymbols(QAbstractSpinBox.NoButtons)
-        play.addWidget(_row("Triángulos", self.triangles, "Presupuesto de triángulos del nivel de detalle principal (LOD0)."))
-        self.height = QDoubleSpinBox()
-        self.height.setRange(0.01, 1000.0)
-        self.height.setDecimals(2)
-        self.height.setValue(1.0)
-        self.height.setSuffix(" m")
-        self.height.setButtonSymbols(QAbstractSpinBox.NoButtons)
-        play.addWidget(_row("Altura", self.height, "Altura final del objeto en metros."))
-        self.lods = QCheckBox("Generar niveles de detalle (LOD1-LOD3)")
-        self.lods.setChecked(True)
-        self.auto = QCheckBox("Detectar orientación de las vistas")
-        self.auto.setChecked(True)
-        self.auto.setToolTip("Corrige vistas laterales o superior volteadas respecto a las demás.")
-        self.flip = QCheckBox("Invertir frente / espalda")
-        self.flip.setToolTip("Actívalo si el modelo sale mirando hacia atrás.")
-        for cb in (self.lods, self.auto, self.flip):
-            play.addWidget(cb)
-        lay.addWidget(params_card)
+        size_card, slay = _card("TAMAÑO")
+        self.height = _meters(1.0)
+        self.length = _meters(0.0, special="Auto")
+        slay.addWidget(_row("Alto", self.height, "Alto del objeto en metros."))
+        slay.addWidget(_row("Largo", self.length, "Mayor dimensión horizontal en metros. Auto = proporcional al alto."))
+        lay.addWidget(size_card)
 
         self.gen_btn = QPushButton("Generar modelo 3D", objectName="Primary")
         self.gen_btn.setCursor(Qt.PointingHandCursor)
@@ -231,6 +196,17 @@ class ShapePage(QWidget):
         right.setSpacing(10)
         self.viewer = MeshViewer()
         right.addWidget(self.viewer, 1)
+
+        self.open_row = QWidget()
+        orow = QHBoxLayout(self.open_row)
+        orow.setContentsMargins(0, 0, 0, 0)
+        orow.addWidget(QLabel("Apertura"))
+        self.open_slider = QSlider(Qt.Horizontal)
+        self.open_slider.setRange(0, 100)
+        self.open_slider.valueChanged.connect(lambda v: self.viewer.set_open(v / 100))
+        orow.addWidget(self.open_slider, 1)
+        self.open_row.hide()
+        right.addWidget(self.open_row)
 
         bar = QHBoxLayout()
         self.lod_group = QButtonGroup(self)
@@ -253,6 +229,7 @@ class ShapePage(QWidget):
         right.addLayout(bar)
 
         self.info = QLabel("", objectName="Muted")
+        self.info.setWordWrap(True)
         self.warn = QLabel("", objectName="Warn")
         self.warn.setWordWrap(True)
         self.warn.hide()
@@ -279,11 +256,7 @@ class ShapePage(QWidget):
             self.status.setText("Se necesitan al menos la vista frontal y una vista lateral.")
             return
         name = sanitize_name(self.name_edit.text()) or "objeto"
-        params = ShapeParams(
-            resolution=self.resolution.value(), triangles=self.triangles.value(),
-            smooth_iters=self.smooth.value(), height=self.height.value(),
-            make_lods=self.lods.isChecked(), auto_orient=self.auto.isChecked(), flip_z=self.flip.isChecked(),
-        )
+        params = ShapeParams(height=self.height.value(), length=self.length.value())
         self.gen_btn.setEnabled(False)
         self.warn.hide()
         self.progress.setValue(0)
@@ -310,16 +283,21 @@ class ShapePage(QWidget):
         for i, b in enumerate(self.lod_buttons):
             b.setEnabled(i < len(result.lods))
         self.lod_buttons[0].setChecked(True)
+        self.open_slider.setValue(0)
+        self.open_row.setVisible(result.lods[0].openable)
         self._show_lod(0)
         if result.warnings:
             self.warn.setText("\n".join(result.warnings))
             self.warn.show()
 
     def _show_lod(self, index):
-        mesh = self.result.lods[index]
-        self.viewer.set_mesh(mesh)
-        w, h, d = mesh.size
-        closed = "cerrada" if self.result.info.get("watertight") and index == 0 else ""
+        model = self.result.lods[index]
+        self.viewer.set_model(model)
+        self.viewer.set_open(self.open_slider.value() / 100)
+        w, h, d = model.size
+        kind = "primitiva simple" if self.result.info.get("mode") == "primitiva" else "volumen de las vistas"
+        parts = ", ".join(p.name for p in model.parts)
+        tex = f" · textura {model.texture.shape[1]}×{model.texture.shape[0]}" if model.texture is not None else ""
         self.info.setText(
-            f"LOD{index}: {mesh.triangles:,} triángulos · {len(mesh.vertices):,} vértices · "
-            f"{w:.2f} × {h:.2f} × {d:.2f} m {('· malla ' + closed) if closed else ''}")
+            f"LOD{index}: {model.triangles:,} triángulos · {model.vertex_count:,} vértices · "
+            f"{w:.2f} × {h:.2f} × {d:.2f} m{tex}\nObjeto {kind}{' · abrible' if model.openable else ''} · piezas: {parts}")

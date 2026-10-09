@@ -36,14 +36,15 @@ def fill_holes(mask: np.ndarray) -> np.ndarray:
 
 
 def load_silhouette(path: str):
-    """Devuelve (máscara booleana recortada al objeto, aviso o None)."""
+    """Devuelve (máscara booleana recortada, imagen RGBA uint8 recortada, aviso o None)."""
     with Image.open(path) as im:
         im = im.convert("RGBA")
     w, h = im.size
     if max(w, h) > MAX_SIDE:
         s = MAX_SIDE / max(w, h)
         im = im.resize((max(1, round(w * s)), max(1, round(h * s))), Image.LANCZOS)
-    arr = np.asarray(im, dtype=np.float32)
+    pixels = np.asarray(im)
+    arr = pixels.astype(np.float32)
 
     alpha = arr[..., 3] / 255.0
     if (alpha < 0.5).mean() > 0.005:  # PNG con transparencia real
@@ -65,4 +66,5 @@ def load_silhouette(path: str):
     xs = np.flatnonzero(mask.any(axis=0))
     if len(ys) == 0:
         raise ValueError("la imagen no contiene ningún objeto")
-    return mask[ys[0]:ys[-1] + 1, xs[0]:xs[-1] + 1], warning
+    box = (slice(ys[0], ys[-1] + 1), slice(xs[0], xs[-1] + 1))
+    return mask[box], pixels[box], warning

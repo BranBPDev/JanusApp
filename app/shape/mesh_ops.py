@@ -78,3 +78,39 @@ def is_watertight(F: np.ndarray) -> bool:
 def signed_volume(V: np.ndarray, F: np.ndarray) -> float:
     p0, p1, p2 = V[F[:, 0]], V[F[:, 1]], V[F[:, 2]]
     return float(np.einsum("ij,ij->i", p0, np.cross(p1, p2)).sum() / 6.0)
+
+
+def crease_normals(V: np.ndarray, F: np.ndarray, angle_deg: float = 40.0) -> np.ndarray:
+    """Normales por esquina de cara (m,3,3): suaves entre caras casi coplanares y duras en las aristas marcadas."""
+    fn = np.cross(V[F[:, 1]] - V[F[:, 0]], V[F[:, 2]] - V[F[:, 0]])
+    area = np.linalg.norm(fn, axis=1)
+    unit = fn / np.maximum(area, 1e-30)[:, None]
+    adj = [[] for _ in range(len(V))]
+    for fi, tri in enumerate(F.tolist()):
+        for v in tri:
+            adj[v].append(fi)
+    cos_t = np.cos(np.radians(angle_deg))
+    out = np.zeros((len(F), 3, 3))
+    for fi, tri in enumerate(F.tolist()):
+        for k, v in enumerate(tri):
+            nb = np.array(adj[v])
+            near = nb[(unit[nb] @ unit[fi]) >= cos_t]
+            n = (fn[near]).sum(axis=0)
+            length = np.linalg.norm(n)
+            out[fi, k] = n / length if length > 1e-30 else unit[fi]
+    return out
+
+
+def build_attributes(V, F, corner_normals, corner_uvs=None):
+    """Convierte atributos por esquina en vértices únicos (duplica donde cambian normal o UV)."""
+    m = len(F)
+    cols = [F.reshape(-1, 1).astype(np.float64), np.round(corner_normals.reshape(-1, 3), 4)]
+    if corner_uvs is not None:
+        cols.append(np.round(corner_uvs.reshape(-1, 2), 5))
+    keys = np.concatenate(cols, axis=1)
+    uniq, first, inverse = np.unique(keys, axis=0, return_index=True, return_inverse=True)
+    corner = np.arange(m * 3)[first]
+    verts = V[F.reshape(-1)[corner]]
+    normals = corner_normals.reshape(-1, 3)[corner]
+    uvs = corner_uvs.reshape(-1, 2)[corner] if corner_uvs is not None else None
+    return verts, inverse.reshape(m, 3).astype(np.int32), normals, uvs

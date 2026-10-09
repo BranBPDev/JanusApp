@@ -3,43 +3,29 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from app.shape.analysis import find_seam
+from app.shape.atlas import Atlas
+from app.shape.cut import OPEN_ANGLE, split_openable
 from app.shape.field import compose, compute_dims, detect_orientation, grid_shape, make_arrays
-from app.shape.mesh_ops import (
-    is_watertight, remove_small_components, signed_volume, taubin_smooth, vertex_normals,
-)
+from app.shape.mesh_ops import build_attributes, crease_normals, is_watertight, remove_small_components, taubin_smooth
+from app.shape.model import Model, Part
 from app.shape.preprocess import load_silhouette
+from app.shape.primitive import fit_primitive, primitive_field
 from app.shape.qem import decimate
 from app.shape.surface_nets import surface_nets
 
 VIEW_NAMES = {"front": "frente", "back": "detrás", "left": "izquierda", "right": "derecha", "top": "arriba"}
-LOD_RATIOS = (1.0, 0.4, 0.15, 0.05)
+LOD_TOLERANCE = (0.015, 0.03, 0.06, 0.12)   # error medio admitido por nivel (fracción del tamaño del objeto)
+RESOLUTION = 88
+RESOLUTION_PRIMITIVE = 64
 PAD = 2
 
 
 @dataclass
 class ShapeParams:
-    resolution: int = 96
-    triangles: int = 3000
-    smooth_iters: int = 6
-    height: float = 1.0
-    make_lods: bool = True
-    auto_orient: bool = True
-    flip_z: bool = False
-
-
-@dataclass
-class MeshData:
-    vertices: np.ndarray
-    faces: np.ndarray
-    normals: np.ndarray
-
-    @property
-    def triangles(self) -> int:
-        return len(self.faces)
-
-    @property
-    def size(self):
-        return tuple((self.vertices.max(axis=0) - self.vertices.min(axis=0)).tolist())
+    """Lo único que decide el usuario: el tamaño. Todo lo demás se calcula a partir de las vistas."""
+    height: float = 1.0   # alto en metros
+    length: float = 0.0   # mayor dimensión horizontal en metros (0 = proporcional al alto)
 
 
 @dataclass
@@ -54,88 +40,124 @@ def _report(cb, frac, msg):
         cb(frac, msg)
 
 
+def _mean_color(image, mask, rows):
+    sel = np.zeros(mask.shape, bool)
+    sel[rows] = True
+    sel &= mask
+    return image[..., :3][sel].mean(axis=0) if sel.any() else None
+
+
 def generate_shape(view_paths: dict, params: ShapeParams, progress=None) -> ShapeResult:
     t0 = time.time()
     warnings = []
 
-    # 1. Siluetas
-    masks = {}
+    masks, images = {}, {}
     given = {k: p for k, p in view_paths.items() if p}
     for i, (key, path) in enumerate(given.items()):
-        _report(progress, 0.08 * i / len(given), f"Leyendo vista {VIEW_NAMES[key]}...")
-        masks[key], warn = load_silhouette(path)
+        _report(progress, 0.06 * i / len(given), f"Leyendo vista {VIEW_NAMES[key]}...")
+        masks[key], images[key], warn = load_silhouette(path)
         if warn:
             warnings.append(f"Vista {VIEW_NAMES[key]}: {warn}.")
     if "front" not in masks or not ({"left", "right"} & set(masks)):
         raise ValueError("Se necesitan al menos la vista frontal y una vista lateral.")
 
-    # 2. Proporciones y rejilla
-    w, h, d = compute_dims(masks)
-    dims = (w, h, d)
-    if "top" in masks:
-        expected = w / d
-        actual = masks["top"].shape[1] / masks["top"].shape[0]
-        if abs(actual / expected - 1) > 0.18:
-            warnings.append("La vista superior no concuerda con las proporciones de las demás vistas.")
-    shape, cell = grid_shape(dims, params.resolution)
+    dims = compute_dims(masks)
+    w, _, d = dims
+    if "top" in masks and abs(masks["top"].shape[1] / masks["top"].shape[0] / (w / d) - 1) > 0.18:
+        warnings.append("La vista superior no concuerda con las proporciones de las demás vistas.")
 
-    # 3. Orientación y casco visual
-    _report(progress, 0.10, "Detectando orientación de las vistas...")
+    # 1. Orientación de las vistas y forma: primitiva simple si explica las siluetas, si no volumen de las vistas
+    _report(progress, 0.08, "Analizando la forma del objeto...")
     flips = {}
-    if params.auto_orient and {"left", "right", "top"} & set(masks):
+    if {"left", "right", "top"} & set(masks):
         flips, score = detect_orientation(masks, dims)
         if score < 0.9:
             warnings.append("Las vistas no son del todo coherentes entre sí; el modelo puede perder detalle.")
-    _report(progress, 0.16, "Calculando volumen a partir de las vistas...")
-    vol, _ = compose(make_arrays(masks, shape), shape, **flips)
-    if params.flip_z:
-        vol = vol[:, :, ::-1]
-    vol = np.pad(vol, PAD)
+    low_shape, _ = grid_shape(dims, 40)
+    primitive, iou = fit_primitive(make_arrays(masks, low_shape), low_shape, flips)
+    shape, cell = grid_shape(dims, RESOLUTION_PRIMITIVE if primitive else RESOLUTION)
 
-    # 4. Superficie
-    _report(progress, 0.26, "Extrayendo superficie...")
-    V, F = surface_nets(vol)
+    if primitive:
+        field_ = primitive_field(primitive, shape, PAD)
+        smooth = 2
+    else:
+        vol, _ = compose(make_arrays(masks, shape), shape, **flips)
+        field_ = np.pad(vol, PAD)
+        smooth = 5
+
+    _report(progress, 0.2, "Extrayendo superficie...")
+    V, F = surface_nets(field_)
     if len(F) == 0:
         raise ValueError("No se pudo generar volumen. Revisa que las vistas correspondan al mismo objeto.")
     V, F = remove_small_components(V, F)
-    V = (V - PAD + 0.5) * cell
+    V = taubin_smooth((V - PAD + 0.5) * cell, F, smooth)
 
-    _report(progress, 0.34, "Suavizando malla...")
-    V = taubin_smooth(V, F, params.smooth_iters)
-    dense_faces = len(F)
-
-    # Colocación: pivote en el centro de la base, altura exacta.
     lo, hi = V.min(axis=0), V.max(axis=0)
-    origin = np.array([(lo[0] + hi[0]) / 2, lo[1], (lo[2] + hi[2]) / 2])
-    scale = params.height / max(hi[1] - lo[1], 1e-9)
+    V = V - np.array([(lo[0] + hi[0]) / 2, lo[1], (lo[2] + hi[2]) / 2])
+    ext = hi - lo
+    size_ref = float(ext.max())
 
-    # 5. Simplificación y LODs
-    targets = [max(32, int(params.triangles * r)) for r in (LOD_RATIOS if params.make_lods else LOD_RATIOS[:1])]
-    levels = []
-    cur_v, cur_f = V, F
-    for li, target in enumerate(targets):
-        lo_p, hi_p = 0.38 + 0.52 * li / len(targets), 0.38 + 0.52 * (li + 1) / len(targets)
-        _report(progress, lo_p, f"Optimizando LOD{li} ({target} triángulos)...")
-        cur_v, cur_f = decimate(
-            cur_v, cur_f, target,
-            lambda f, lo_p=lo_p, hi_p=hi_p, li=li, target=target: _report(
-                progress, lo_p + (hi_p - lo_p) * f, f"Optimizando LOD{li} ({target} triángulos)..."))
+    # 2. Simplificación guiada por error: cada nivel usa los menos triángulos posibles para su tolerancia
+    levels, cur_v, cur_f = [], V, F
+    for li, tol in enumerate(LOD_TOLERANCE):
+        a, b = 0.3 + 0.35 * li / 4, 0.3 + 0.35 * (li + 1) / 4
+        msg = f"Optimizando LOD{li}..."
+        _report(progress, a, msg)
+        cur_v, cur_f = decimate(cur_v, cur_f, tol * size_ref, 12,
+                                lambda f, a=a, b=b, msg=msg: _report(progress, a + (b - a) * f, msg))
         levels.append((cur_v, cur_f))
 
-    lods = []
-    for v, f in levels:
-        v = (v - origin) * scale
-        lods.append(MeshData(v.astype(np.float32), f.astype(np.int32), vertex_normals(v, f).astype(np.float32)))
+    # 3. Color: atlas con las vistas + junta (si la hay) para dividir y vaciar el objeto
+    _report(progress, 0.68, "Preparando textura...")
+    seam = find_seam(images, masks)
+    upper = lower = None
+    if seam is not None:
+        h = images["front"].shape[0]
+        cut_row = int(round(seam * h))
+        upper = _mean_color(images["front"], masks["front"], slice(0, cut_row))
+        lower = _mean_color(images["front"], masks["front"], slice(cut_row, h))
+    box_lo = np.array([-ext[0] / 2, 0.0, -ext[2] / 2])
+    atlas = Atlas(images, masks, (box_lo, box_lo + ext), upper_color=upper, lower_color=lower)
+    y_cut = float(ext[1] * (1 - seam)) if seam is not None else None
 
-    dense_v = (V - origin) * scale
+    _report(progress, 0.78, "Construyendo piezas...")
+    sy = params.height / max(ext[1], 1e-9)
+    sxz = params.length / max(ext[0], ext[2]) if params.length > 0 else sy
+    lods, openable = [], False
+    for (v, f), tol in zip(levels, LOD_TOLERANCE):
+        parts, was_split = _build_parts(v, f, y_cut, atlas, min(2 * tol, 0.05) * size_ref)
+        openable = openable or was_split
+        lods.append(Model(parts, atlas.texture).scaled(sxz, sy))
+
     info = {
+        "mode": "primitiva" if primitive else "volumen",
+        "primitive": {"axis": primitive[0], "e1": primitive[1], "e2": primitive[2]} if primitive else None,
+        "primitive_iou": round(float(iou), 4),
+        "openable": openable, "seam": seam,
+        "watertight": bool(is_watertight(levels[0][1])),
+        "texture": [atlas.size[1], atlas.size[0]],
         "seconds": round(time.time() - t0, 2),
-        "grid": list(vol.shape),
-        "flips": {k: bool(v) for k, v in flips.items()},
-        "dense_triangles": dense_faces,
-        "watertight": bool(is_watertight(lods[0].faces)),
-        "volume": round(abs(signed_volume(dense_v, F)), 4),
+        "triangles": [m.triangles for m in lods],
         "size": [round(x, 4) for x in lods[0].size],
     }
     _report(progress, 0.92, "Modelo generado")
     return ShapeResult(lods=lods, warnings=warnings, info=info)
+
+
+def _build_parts(V, F, y_cut, atlas, inner_tol):
+    """Una pieza ('body') o, si hay junta y se puede cortar, base + tapa huecas con bisagra."""
+    split = split_openable(V, F, y_cut, inner_tol) if y_cut is not None else None
+    if split is None:
+        specs = [("body", V, F, np.zeros(len(F), int), atlas.lower_uv, None)]
+    else:
+        (bv, bf, bk), (lv, lf, lk), hinge = split
+        specs = [("base", bv, bf, bk, atlas.lower_uv, None), ("lid", lv, lf, lk, atlas.upper_uv, hinge)]
+
+    parts = []
+    for name, v, f, kind, interior_uv, hinge in specs:
+        normals = crease_normals(v, f)
+        uvs = atlas.corner_uvs(v, f, kind, interior_uv)
+        verts, faces, nrm, uv = build_attributes(v, f, normals, uvs)
+        extra = {"origin": hinge, "axis": (1.0, 0.0, 0.0), "open_angle": OPEN_ANGLE} if hinge else {}
+        parts.append(Part(name, verts.astype(np.float32), faces, nrm.astype(np.float32), uv.astype(np.float32), **extra))
+    return parts, split is not None
