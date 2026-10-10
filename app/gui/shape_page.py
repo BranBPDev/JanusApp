@@ -4,7 +4,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices, QFontMetrics, QPixmap
 from PySide6.QtWidgets import (
-    QAbstractSpinBox, QButtonGroup, QCheckBox, QDoubleSpinBox, QFileDialog, QFrame, QHBoxLayout, QLabel,
+    QButtonGroup, QCheckBox, QFileDialog, QFrame, QHBoxLayout, QLabel,
     QLineEdit, QProgressBar, QPushButton, QScrollArea, QSlider, QVBoxLayout, QWidget,
 )
 
@@ -15,6 +15,10 @@ from app.shape.project import sanitize_name
 
 IMAGE_FILTER = "Imágenes (*.png *.jpg *.jpeg *.bmp *.webp *.tga *.tif *.tiff)"
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".webp", ".tga", ".tif", ".tiff"}
+
+SIZES = (("Mini", 0.2), ("Pequeño", 0.5), ("Mediano", 1.0), ("Grande", 2.0), ("Enorme", 4.0))  # mayor dimensión en metros
+
+CELLS = (("1 cm", 0.01), ("5 cm", 0.05), ("10 cm", 0.1), ("25 cm", 0.25), ("50 cm", 0.5), ("1 m", 1.0))  # lo que mide un cuadro
 
 VIEWS = (
     ("front", "Frente", ("front", "frente", "delante", "frontal")),
@@ -40,7 +44,7 @@ def guess_view(filename: str):
 class ViewSlot(QFrame):
     def __init__(self, key: str, title: str):
         super().__init__(objectName="Card")
-        self.key, self.path = key, None
+        self.key, self.path, self.grid_path = key, None, None
         self.setAcceptDrops(True)
         lay = QHBoxLayout(self)
         lay.setContentsMargins(10, 8, 10, 8)
@@ -54,13 +58,15 @@ class ViewSlot(QFrame):
         info.setSpacing(0)
         info.addWidget(QLabel(title, objectName="Brand"))
         self.file_label = QLabel("Sin imagen", objectName="Muted")
+        self.grid_label = QLabel("Sin malla", objectName="Muted")
         info.addWidget(self.file_label)
+        info.addWidget(self.grid_label)
         lay.addLayout(info, 1)
 
         self.pick_btn = QPushButton("Elegir")
         self.pick_btn.clicked.connect(self._pick)
         self.clear_btn = QPushButton("Quitar")
-        self.clear_btn.clicked.connect(lambda: self.set_path(None))
+        self.clear_btn.clicked.connect(self._clear)
         lay.addWidget(self.pick_btn)
         lay.addWidget(self.clear_btn)
         self._refresh()
@@ -70,8 +76,16 @@ class ViewSlot(QFrame):
         if path:
             self.set_path(path)
 
+    def _clear(self):
+        self.grid_path = None
+        self.set_path(None)
+
     def set_path(self, path):
         self.path = path
+        self._refresh()
+
+    def set_grid(self, path):
+        self.grid_path = path
         self._refresh()
 
     def _refresh(self):
@@ -83,7 +97,12 @@ class ViewSlot(QFrame):
             self.thumb.setPixmap(pix.scaled(52, 52, Qt.KeepAspectRatio, Qt.SmoothTransformation))
             name = QFontMetrics(self.file_label.font()).elidedText(Path(self.path).name, Qt.ElideMiddle, 140)
             self.file_label.setText(name)
-        self.clear_btn.setEnabled(bool(self.path))
+        if self.grid_path:
+            name = QFontMetrics(self.grid_label.font()).elidedText(Path(self.grid_path).name, Qt.ElideMiddle, 140)
+            self.grid_label.setText(f"Malla: {name}")
+        else:
+            self.grid_label.setText("Sin malla")
+        self.clear_btn.setEnabled(bool(self.path or self.grid_path))
 
     def dragEnterEvent(self, e):
         if e.mimeData().hasUrls():
@@ -107,18 +126,6 @@ def _row(text, widget, tip=""):
     widget.setToolTip(tip)
     lay.addWidget(label)
     lay.addWidget(widget, 1)
-    return box
-
-
-def _meters(value, maximum=1000.0, special=None):
-    box = QDoubleSpinBox()
-    box.setRange(0.0 if special else 0.01, maximum)
-    box.setDecimals(2)
-    box.setValue(value)
-    box.setSuffix(" m")
-    box.setButtonSymbols(QAbstractSpinBox.NoButtons)
-    if special:
-        box.setSpecialValueText(special)
     return box
 
 
@@ -170,11 +177,40 @@ class ShapePage(QWidget):
         vlay.addWidget(load_multi)
         lay.addWidget(views_card)
 
+        grid_card, glay = _card("MALLA DE MEDIDAS")
+        load_grids = QPushButton("Cargar mallas (una por vista)...")
+        load_grids.setToolTip("Capas con la cuadrícula (y las marcas) de cada vista. Se asignan por el nombre del archivo.")
+        load_grids.clicked.connect(self._load_grids)
+        glay.addWidget(load_grids)
+        cell_row = QHBoxLayout()
+        cell_row.setSpacing(6)
+        self.cell_group = QButtonGroup(self)
+        for i, (label, meters) in enumerate(CELLS):
+            b = QPushButton(label, objectName="Size", checkable=True)
+            b.setToolTip(f"Cada cuadro de la malla mide {meters:g} m")
+            self.cell_group.addButton(b, i)
+            cell_row.addWidget(b, 1)
+        self.cell_group.button(2).setChecked(True)
+        glay.addWidget(QLabel("Cada cuadro mide:", objectName="Muted"))
+        glay.addLayout(cell_row)
+        lay.addWidget(grid_card)
+
         size_card, slay = _card("TAMAÑO")
-        self.height = _meters(1.0)
-        self.length = _meters(0.0, special="Auto")
-        slay.addWidget(_row("Alto", self.height, "Alto del objeto en metros."))
-        slay.addWidget(_row("Largo", self.length, "Mayor dimensión horizontal en metros. Auto = proporcional al alto."))
+        size_row = QHBoxLayout()
+        size_row.setSpacing(6)
+        self.size_group = QButtonGroup(self)
+        for i, (label, meters) in enumerate(SIZES):
+            b = QPushButton(label, objectName="Size", checkable=True)
+            b.setToolTip(f"Mayor dimensión del objeto: {meters:g} m")
+            self.size_group.addButton(b, i)
+            size_row.addWidget(b, 1)
+        self.size_group.button(2).setChecked(True)
+        self.size_group.idClicked.connect(self._on_size)
+        slay.addLayout(size_row)
+        self.size_label = QLabel("", objectName="Muted")
+        self.size_label.setWordWrap(True)
+        slay.addWidget(self.size_label)
+        self._on_size(2)
         lay.addWidget(size_card)
 
         self.gen_btn = QPushButton("Generar modelo 3D", objectName="Primary")
@@ -196,17 +232,6 @@ class ShapePage(QWidget):
         right.setSpacing(10)
         self.viewer = MeshViewer()
         right.addWidget(self.viewer, 1)
-
-        self.open_row = QWidget()
-        orow = QHBoxLayout(self.open_row)
-        orow.setContentsMargins(0, 0, 0, 0)
-        orow.addWidget(QLabel("Apertura"))
-        self.open_slider = QSlider(Qt.Horizontal)
-        self.open_slider.setRange(0, 100)
-        self.open_slider.valueChanged.connect(lambda v: self.viewer.set_open(v / 100))
-        orow.addWidget(self.open_slider, 1)
-        self.open_row.hide()
-        right.addWidget(self.open_row)
 
         bar = QHBoxLayout()
         self.lod_group = QButtonGroup(self)
@@ -238,6 +263,10 @@ class ShapePage(QWidget):
         root.addLayout(right, 1)
 
     # ---------- Acciones ----------
+    def _on_size(self, index):
+        label, meters = SIZES[index]
+        self.size_label.setText(f"{label}: la mayor dimensión del objeto mide {meters:g} m (se mantiene la proporción).")
+
     def _load_multiple(self):
         paths, _ = QFileDialog.getOpenFileNames(self, "Seleccionar vistas", "", IMAGE_FILTER)
         unknown = []
@@ -250,17 +279,40 @@ class ShapePage(QWidget):
         if unknown:
             self.status.setText("Sin asignar (nombre no reconocido): " + ", ".join(unknown))
 
+    def _load_grids(self):
+        paths, _ = QFileDialog.getOpenFileNames(self, "Seleccionar mallas", "", IMAGE_FILTER)
+        unknown = []
+        for p in paths:
+            key = guess_view(p)
+            if key:
+                self.slots[key].set_grid(p)
+            else:
+                unknown.append(Path(p).name)
+        self.status.setText("Sin asignar (nombre no reconocido): " + ", ".join(unknown) if unknown else "")
+        self._update_size_state()
+
+    def _update_size_state(self):
+        has_grid = any(s.grid_path for s in self.slots.values())
+        for b in self.size_group.buttons():
+            b.setEnabled(not has_grid)
+        if has_grid:
+            self.size_label.setText("El tamaño se toma de la malla (cada cuadro = la medida elegida arriba).")
+        else:
+            self._on_size(self.size_group.checkedId())
+
     def _generate(self):
+        self._update_size_state()
         paths = {k: s.path for k, s in self.slots.items()}
+        grids = {k: s.grid_path for k, s in self.slots.items()}
         if not paths["front"] or not (paths["left"] or paths["right"]):
             self.status.setText("Se necesitan al menos la vista frontal y una vista lateral.")
             return
         name = sanitize_name(self.name_edit.text()) or "objeto"
-        params = ShapeParams(height=self.height.value(), length=self.length.value())
+        params = ShapeParams(size=SIZES[self.size_group.checkedId()][1], cell=CELLS[self.cell_group.checkedId()][1])
         self.gen_btn.setEnabled(False)
         self.warn.hide()
         self.progress.setValue(0)
-        self.worker = ShapeWorker(name, paths, params)
+        self.worker = ShapeWorker(name, paths, grids, params)
         self.worker.progress.connect(self._on_progress)
         self.worker.finished_ok.connect(self._on_done)
         self.worker.failed.connect(self._on_failed)
@@ -281,10 +333,8 @@ class ShapePage(QWidget):
         self.open_btn.setEnabled(True)
         self.status.setText(f"Guardado en {root} ({result.info['seconds']} s)")
         for i, b in enumerate(self.lod_buttons):
-            b.setEnabled(i < len(result.lods))
+            b.setEnabled(i < len(result.lods) and not result.descriptor)
         self.lod_buttons[0].setChecked(True)
-        self.open_slider.setValue(0)
-        self.open_row.setVisible(result.lods[0].openable)
         self._show_lod(0)
         if result.warnings:
             self.warn.setText("\n".join(result.warnings))
@@ -293,11 +343,18 @@ class ShapePage(QWidget):
     def _show_lod(self, index):
         model = self.result.lods[index]
         self.viewer.set_model(model)
-        self.viewer.set_open(self.open_slider.value() / 100)
         w, h, d = model.size
+        if self.result.descriptor:
+            desc = self.result.descriptor
+            name = "Esfera" if desc["type"] == "sphere" else "Elipsoide"
+            self.info.setText(
+                f"{name} paramétrico: 0 triángulos propios (el motor usa su {name.lower()} compartida con esta textura)\n"
+                f"{w:.2f} × {h:.2f} × {d:.2f} m · textura {self.result.texture.shape[1]}×{self.result.texture.shape[0]}"
+                f"\nLa malla del visor es solo una vista previa y no se guarda.")
+            return
         kind = "primitiva simple" if self.result.info.get("mode") == "primitiva" else "volumen de las vistas"
         parts = ", ".join(p.name for p in model.parts)
         tex = f" · textura {model.texture.shape[1]}×{model.texture.shape[0]}" if model.texture is not None else ""
         self.info.setText(
             f"LOD{index}: {model.triangles:,} triángulos · {model.vertex_count:,} vértices · "
-            f"{w:.2f} × {h:.2f} × {d:.2f} m{tex}\nObjeto {kind}{' · abrible' if model.openable else ''} · piezas: {parts}")
+            f"{w:.2f} × {h:.2f} × {d:.2f} m{tex}\nForma: {kind} · piezas: {parts}")

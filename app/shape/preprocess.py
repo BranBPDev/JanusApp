@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+
 import numpy as np
 from PIL import Image
 
@@ -35,11 +37,21 @@ def fill_holes(mask: np.ndarray) -> np.ndarray:
         reach, count = grown, new_count
 
 
-def load_silhouette(path: str):
-    """Devuelve (máscara booleana recortada, imagen RGBA uint8 recortada, aviso o None)."""
+@dataclass
+class View:
+    mask: np.ndarray       # máscara booleana recortada al objeto
+    rgba: np.ndarray       # imagen RGBA uint8 recortada
+    warning: str           # aviso o None
+    scale: float           # píxeles originales por píxel procesado
+    box: tuple             # (x0, y0, x1, y1) del objeto en píxeles procesados
+    original_size: tuple   # (ancho, alto) de la imagen original
+
+
+def load_silhouette(path: str) -> View:
     with Image.open(path) as im:
         im = im.convert("RGBA")
     w, h = im.size
+    original_size = (w, h)
     if max(w, h) > MAX_SIDE:
         s = MAX_SIDE / max(w, h)
         im = im.resize((max(1, round(w * s)), max(1, round(h * s))), Image.LANCZOS)
@@ -67,4 +79,4 @@ def load_silhouette(path: str):
     if len(ys) == 0:
         raise ValueError("la imagen no contiene ningún objeto")
     box = (slice(ys[0], ys[-1] + 1), slice(xs[0], xs[-1] + 1))
-    return mask[box], pixels[box], warning
+    return View(mask[box], pixels[box], warning, w / pixels.shape[1], (xs[0], ys[0], xs[-1] + 1, ys[-1] + 1), original_size)
