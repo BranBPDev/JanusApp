@@ -39,8 +39,53 @@ def fit_primitive(arrays, shape, flips):
     return (best if best_iou >= ACCEPT_IOU else None), best_iou
 
 
-def primitive_field(params, shape, pad):
-    """Campo escalar (iso 0.5 en la superficie) del supercuádrico, ya con margen para la extracción de superficie."""
+def is_round(params) -> bool:
+    return params[1] >= 0.7 and params[2] >= 0.7
+
+
+def _spow(x, e):
+    return np.sign(x) * np.abs(x) ** e
+
+
+def primitive_mesh(params, ext, n_around: int, n_lat: int):
+    """Malla regular del supercuádrico (ejes centrados en x/z, apoyada en y=0). Pocos triángulos, simétrica y cerrada."""
     axis, e1, e2 = params
-    f = _implicit(shape, axis, e1, e2, extra=pad)
-    return (0.5 - 0.35 * np.log(np.maximum(f, 1e-6))).astype(np.float32)
+    a, b = [i for i in range(3) if i != axis]
+    half = np.asarray(ext, np.float64) / 2
+    lon = np.arange(n_around) * 2 * np.pi / n_around
+    ca, sa = _spow(np.cos(lon), e2), _spow(np.sin(lon), e2)
+
+    verts = []
+    pole = np.zeros(3)
+    pole[axis] = -half[axis]
+    verts.append(pole)
+    for w in np.linspace(-np.pi / 2, np.pi / 2, n_lat + 1)[1:-1]:
+        ring = np.zeros((n_around, 3))
+        ring[:, axis] = _spow(np.sin(w), e1) * half[axis]
+        radius = np.abs(np.cos(w)) ** e1
+        ring[:, a] = radius * ca * half[a]
+        ring[:, b] = radius * sa * half[b]
+        verts.extend(ring)
+    pole = np.zeros(3)
+    pole[axis] = half[axis]
+    verts.append(pole)
+    V = np.array(verts)
+
+    n, rings = n_around, n_lat - 1
+    faces = []
+    first = lambda i: 1 + i * n
+    for j in range(n):
+        k = (j + 1) % n
+        faces.append((0, first(0) + k, first(0) + j))
+        for i in range(rings - 1):
+            p0, p1, p2, p3 = first(i) + j, first(i) + k, first(i + 1) + k, first(i + 1) + j
+            faces += [(p0, p1, p2), (p0, p2, p3)]
+        faces.append((len(V) - 1, first(rings - 1) + j, first(rings - 1) + k))
+    F = np.array(faces, np.int32)
+
+    tri = V[F]
+    outward = (np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0]) * tri.mean(axis=1)).sum()
+    if outward < 0:
+        F = F[:, ::-1]
+    V[:, 1] += half[1]
+    return V, np.ascontiguousarray(F)

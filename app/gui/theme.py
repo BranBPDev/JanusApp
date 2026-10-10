@@ -56,10 +56,11 @@ QPushButton:disabled { color: $disabled; border-color: $border; }
 QPushButton#Primary { background: $accent; border: none; color: white; font-weight: 600; padding: 11px 16px; }
 QPushButton#Primary:hover { background: $accent_hover; }
 QPushButton#Primary:disabled { background: $elevated; color: $disabled; }
-QPushButton#Seg { padding: 6px 14px; border-radius: 6px; }
-QPushButton#Seg:checked { background: $accent_soft; border-color: $accent; font-weight: 600; }
+QPushButton#Seg, QPushButton#Size { padding: 6px 14px; border-radius: 6px; }
+QPushButton#Size { padding: 8px 4px; }
+QPushButton#Seg:checked, QPushButton#Size:checked { background: $accent_soft; border-color: $accent; font-weight: 600; }
 
-QLineEdit, QSpinBox, QDoubleSpinBox { background: $elevated; border: 1px solid $border; border-radius: 6px; padding: 6px 8px; selection-background-color: $accent; }
+QLineEdit, QSpinBox, QDoubleSpinBox { color: $text; min-height: 20px; background: $elevated; border: 1px solid $border; border-radius: 6px; padding: 6px 8px; selection-background-color: $accent; }
 QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus { border-color: $accent; }
 
 QSlider::groove:horizontal { height: 4px; background: $elevated; border-radius: 2px; }
