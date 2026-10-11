@@ -3,6 +3,7 @@ from collections import deque
 import numpy as np
 from PIL import Image
 
+CELL_M = 0.05           # lo que mide SIEMPRE un cuadro de la malla (metros)
 LINE_FRACTION = 0.5     # una línea de la malla ocupa al menos la mitad del lado de la imagen
 COLOR_TOLERANCE = 60
 
@@ -78,6 +79,17 @@ def _components(points):
     return comps
 
 
+def _endpoints(points):
+    """Extremos de un conjunto de píxeles (y, x) a lo largo de su eje principal."""
+    a = np.asarray(points, np.float64)
+    if len(a) < 2:
+        return None
+    c = a.mean(axis=0)
+    axis = np.linalg.svd(a - c, full_matrices=False)[2][0]
+    t = (a - c) @ axis
+    return a[np.argmin(t)], a[np.argmax(t)]
+
+
 def analyze_overlay(path, original_size, box_px, cell_m):
     """Lee la capa de malla de una vista. Devuelve {'cell_px', 'marks', 'warning'} o None si no hay cuadrícula legible.
     'box_px' = (x0, y0, x1, y1) del objeto en píxeles de la imagen original (origen de las medidas de las marcas)."""
@@ -133,10 +145,22 @@ def analyze_overlay(path, original_size, box_px, cell_m):
             else:
                 style = "continua"
             centers = [to_m(np.mean([p[1] for p in c]), np.mean([p[0] for p in c])) for c in comps[:200]]
+            segments = []
+            if style == "continua":
+                groups = [c for c in comps if len(c) >= 8]
+            elif style == "discontinua":
+                groups = [[p for c in comps for p in c]]
+            else:
+                groups = []
+            for g in groups:
+                e = _endpoints(g)
+                if e is not None:
+                    segments.append([to_m(e[0][1], e[0][0]), to_m(e[1][1], e[1][0])])
             allx = [p[1] for c in comps for p in c]
             ally = [p[0] for c in comps for p in c]
             marks.append({"color": _name(color), "style": style, "components": len(comps),
-                          "bbox_m": [*to_m(min(allx), max(ally)), *to_m(max(allx), min(ally))], "points_m": centers})
+                          "bbox_m": [*to_m(min(allx), max(ally)), *to_m(max(allx), min(ally))], "points_m": centers,
+                          "segments_m": segments})
     return {"cell_px": cell_px, "marks": marks, "warning": warning}
 
 
@@ -153,9 +177,10 @@ def metric_dims(views: dict, cells: dict, cell_m: float):
     W = [sizes[k][0] for k in ("front", "back") if k in sizes]
     H = [sizes[k][1] for k in ("front", "back", "left", "right") if k in sizes]
     D = [sizes[k][0] for k in ("left", "right") if k in sizes]
-    if "top" in sizes:
-        W.append(sizes["top"][0])
-        D.append(sizes["top"][1])
+    for key in ("top", "bottom"):
+        if key in sizes:
+            W.append(sizes[key][0])
+            D.append(sizes[key][1])
     warnings = []
     out = []
     for name, vals in (("ancho", W), ("alto", H), ("fondo", D)):

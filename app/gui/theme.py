@@ -67,6 +67,12 @@ QSlider::groove:horizontal { height: 4px; background: $elevated; border-radius: 
 QSlider::sub-page:horizontal { background: $accent; border-radius: 2px; }
 QSlider::handle:horizontal { background: $text; width: 14px; height: 14px; margin: -5px 0; border-radius: 7px; }
 
+QToolButton#IconAdd, QToolButton#IconDel { background: rgba(14, 16, 22, 200); border-radius: 12px; padding: 0; }
+QToolButton#IconAdd { border: 2px solid #22C55E; }
+QToolButton#IconAdd:hover { background: rgba(34, 197, 94, 70); }
+QToolButton#IconDel { border: 2px solid #EF4444; }
+QToolButton#IconDel:hover { background: rgba(239, 68, 68, 70); }
+
 QCheckBox { spacing: 8px; }
 QScrollArea { background: transparent; border: none; }
 

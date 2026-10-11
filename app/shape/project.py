@@ -7,7 +7,7 @@ from pathlib import Path
 from PIL import Image
 
 from app.shape.export import texture_png, write_glb, write_obj
-from app.shape.pipeline import ShapeParams, ShapeResult
+from app.shape.pipeline import ShapeResult
 from app.utils.paths_util import PROJECTS_DIR
 
 PHASES = ("shape", "texture", "collision", "rig")
@@ -21,7 +21,7 @@ def project_dir(name: str) -> Path:
     return PROJECTS_DIR / sanitize_name(name)
 
 
-def save_shape(name: str, view_paths: dict, grid_paths: dict, params: ShapeParams, result: ShapeResult) -> Path:
+def save_shape(name: str, view_paths: dict, grid_paths: dict, result: ShapeResult) -> Path:
     """Guarda vistas, un GLB por LOD, el OBJ/MTL/textura del LOD0 y manifest.json (conserva las demás fases)."""
     root = project_dir(name)
     views_dir, shape_dir = root / "views", root / "shape"
@@ -81,7 +81,7 @@ def save_shape(name: str, view_paths: dict, grid_paths: dict, params: ShapeParam
         "views": views,
         "grids": grids,
         "annotations": result.marks,
-        "shape": {"parts": parts, "lods": lods, "params": vars(params), "primitive_object": result.descriptor, **result.info},
+        "shape": {"parts": parts, "lods": lods, "primitive_object": result.descriptor, **result.info},
         "phases": {p: bool(phases.get(p, False)) for p in PHASES} | {"shape": True, "texture": texture_ok},
     })
     manifest_path.write_text(json.dumps(manifest, indent=4, ensure_ascii=False), encoding="utf-8")

@@ -1,11 +1,13 @@
 import numpy as np
 
-from app.shape.atlas import CHARTS, extend_colors
+from app.shape.atlas import CHARTS, NEUTRAL, extend_colors
+from app.shape.cut import WALL, split_openable
 from app.shape.mesh_ops import build_attributes, crease_normals
 from app.shape.model import Model, Part
 from app.shape.primitive import primitive_mesh
 
 TEX_WIDTH = 256
+STRIP = 8          # filas extra (solo en la vista previa) con los colores planos del interior
 PREVIEW_GRID = (32, 16)
 
 
@@ -13,8 +15,9 @@ def is_ellipsoid(params) -> bool:
     return params is not None and params[1] == 1.0 and params[2] == 1.0
 
 
-def bake_equirect(images, masks, ext, width: int = TEX_WIDTH):
+def bake_equirect(images, masks, ext, flips=None, width: int = TEX_WIDTH):
     """Textura equirrectangular (u = longitud con el frente en 0,5; v = latitud con el polo +Y arriba) pintada con las vistas."""
+    f = flips or {}
     w, h = width, width // 2
     lon = ((np.arange(w) + 0.5) / w - 0.5) * 2 * np.pi
     lat = (0.5 - (np.arange(h) + 0.5) / h) * np.pi
@@ -25,7 +28,9 @@ def bake_equirect(images, masks, ext, width: int = TEX_WIDTH):
     n /= np.linalg.norm(n, axis=-1, keepdims=True)
     t = (d * half + np.array([0.0, half[1], 0.0]) - np.array([-half[0], 0.0, -half[2]])) / np.asarray(ext)
     x, y, z = t[..., 0], t[..., 1], t[..., 2]
-    coords = {"front": (x, 1 - y), "back": (1 - x, 1 - y), "right": (z, 1 - y), "left": (1 - z, 1 - y), "top": (x, z)}
+    coords = {"front": (x, 1 - y), "back": (1 - x, 1 - y),
+              "right": (1 - z if f.get("fr") else z, 1 - y), "left": (z if f.get("fl") else 1 - z, 1 - y),
+              "top": (x, 1 - z if f.get("ft") else z), "bottom": (x, z if f.get("fb") else 1 - z)}
 
     acc = np.zeros((h, w, 3))
     total = np.zeros((h, w))
@@ -45,6 +50,11 @@ def bake_equirect(images, masks, ext, width: int = TEX_WIDTH):
     return tex
 
 
+def _interior(mean):
+    mean = NEUTRAL if mean is None else np.asarray(mean, np.float64)
+    return np.clip(0.25 * mean + 0.75 * NEUTRAL, 0, 255)
+
+
 def _equirect_uvs(V, F, ext):
     half = np.asarray(ext, np.float64) / 2
     rel = (V[F] - np.array([0.0, half[1], 0.0])) / half
@@ -59,17 +69,48 @@ def _equirect_uvs(V, F, ext):
     return np.stack([np.where(pole, mean[:, None], u), v], axis=2)
 
 
-def preview_model(ext, texture):
-    """Malla SOLO para la vista previa de la aplicación (no se exporta)."""
+def preview_model(ext, texture, opening):
+    """Malla SOLO para la vista previa de la aplicación (no se exporta). Devuelve (modelo, datos de apertura o None)."""
+    h, w = texture.shape[:2]
     V, F = primitive_mesh((1, 1.0, 1.0), np.asarray(ext), *PREVIEW_GRID)
-    verts, faces, nrm, uv = build_attributes(V, F, crease_normals(V, F, 60.0), _equirect_uvs(V, F, ext))
-    return Model([Part("body", verts.astype(np.float32), faces, nrm.astype(np.float32), uv.astype(np.float32))], texture)
+    split = split_openable(V, F, opening) if opening else None
+    if split is None:
+        specs = [("body", V, F, np.zeros(len(F), int))]
+    else:
+        specs = [("fixed", *split[0]), ("movable", *split[1])]
+
+    raw, colors = [], {}
+    for name, v, f, kind in specs:
+        uvs = _equirect_uvs(v, f, ext)
+        c = uvs[kind == 0].mean(axis=1)
+        colors[name] = texture[np.clip((c[:, 1] * h).astype(int), 0, h - 1), (c[:, 0] % 1 * w).astype(int) % w, :3].mean(axis=0)
+        raw.append((name, v, f, kind, uvs))
+
+    strip = np.full((STRIP, w, 4), 255, np.uint8)
+    strip[:, : w // 2, :3] = _interior(colors.get("movable")).astype(np.uint8)
+    strip[:, w // 2:, :3] = _interior(colors.get("fixed")).astype(np.uint8)
+    tex = np.vstack([texture, strip])
+    scale_v = h / (h + STRIP)
+    mid_v = (h + STRIP / 2) / (h + STRIP)
+    interior_uv = {"movable": (0.25, mid_v), "fixed": (0.75, mid_v), "body": (0.75, mid_v)}
+
+    parts = []
+    for name, v, f, kind, uvs in raw:
+        uvs = uvs * np.array([1.0, scale_v])
+        uvs[kind == 1] = np.array(interior_uv[name])
+        verts, faces, nrm, uv = build_attributes(v, f, crease_normals(v, f, 60.0), uvs)
+        extra = {}
+        if name == "movable":
+            extra = {"origin": split[2], "axis": split[3], "open_angle": split[4]}
+        parts.append(Part(name, verts.astype(np.float32), faces, nrm.astype(np.float32), uv.astype(np.float32), **extra))
+    info = None if split is None else {"hinge": split[2], "axis": split[3], "angle": split[4], "colors": colors}
+    return Model(parts, tex), info
 
 
-def descriptor(ext_m):
-    """Lo único que se guarda del objeto: esfera/elipsoide paramétrico y su textura. Sin triángulos."""
+def descriptor(ext_m, opening_info=None, opening=None, scale=1.0):
+    """Lo único que se guarda del objeto: esfera/elipsoide paramétrico, textura y (si hay) apertura. Sin triángulos."""
     ax, ay, az = [float(v) / 2 for v in ext_m]
-    return {
+    out = {
         "type": "sphere" if max(ax, ay, az) / min(ax, ay, az) < 1.03 else "ellipsoid",
         "semi_axes": [round(ax, 5), round(ay, 5), round(az, 5)],
         "center": [0.0, round(ay, 5), 0.0],
@@ -77,3 +118,16 @@ def descriptor(ext_m):
         "uv": "equirect: u = atan2(x, z) / 2pi + 0.5 (frente en u=0.5); v = 0.5 - asin(y / semi_axis_y) / pi (origen arriba)",
         "triangles": 0,
     }
+    if opening_info is not None:
+        r = lambda a: [round(float(x) * scale, 5) for x in a]
+        out["opening"] = {
+            "plane_point": r(opening["point"]),
+            "plane_normal": [round(float(x), 5) for x in opening["normal"]],
+            "moving_side": "la del lado al que apunta plane_normal",
+            "hinge": r(opening_info["hinge"]),
+            "axis": list(opening_info["axis"]),
+            "open_angle_deg": opening_info["angle"],
+            "wall": WALL,
+            "interior_color": {k: np.round(_interior(v)).astype(int).tolist() for k, v in opening_info["colors"].items()},
+        }
+    return out

@@ -1,6 +1,6 @@
 from PySide6.QtCore import QThread, Signal
 
-from app.shape.pipeline import ShapeParams, generate_shape
+from app.shape.pipeline import generate_shape
 from app.shape.project import save_shape
 from app.utils.logger_util import get_logger
 
@@ -13,15 +13,15 @@ class ShapeWorker(QThread):
     finished_ok = Signal(object, str)   # ShapeResult, carpeta del proyecto
     failed = Signal(str)
 
-    def __init__(self, name: str, view_paths: dict, grid_paths: dict, params: ShapeParams):
+    def __init__(self, name: str, view_paths: dict, grid_paths: dict):
         super().__init__()
-        self.name, self.view_paths, self.grid_paths, self.params = name, view_paths, grid_paths, params
+        self.name, self.view_paths, self.grid_paths = name, view_paths, grid_paths
 
     def run(self):
         try:
-            result = generate_shape(self.view_paths, self.grid_paths, self.params, lambda f, m: self.progress.emit(f, m))
+            result = generate_shape(self.view_paths, self.grid_paths, lambda f, m: self.progress.emit(f, m))
             self.progress.emit(0.95, "Guardando proyecto...")
-            root = save_shape(self.name, self.view_paths, self.grid_paths, self.params, result)
+            root = save_shape(self.name, self.view_paths, self.grid_paths, result)
             log.info(f"Forma generada en {root}: {result.info}")
             self.progress.emit(1.0, "Completado")
             self.finished_ok.emit(result, str(root))

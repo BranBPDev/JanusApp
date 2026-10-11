@@ -8,6 +8,7 @@ from PIL import Image
 #   derecha: el frente del objeto mira hacia la derecha de la imagen
 #   izquierda: el frente mira hacia la izquierda de la imagen
 #   arriba: el frente del objeto está en la parte inferior de la imagen
+#   abajo: el frente del objeto está en la parte superior de la imagen
 
 
 def compute_dims(masks: dict):
@@ -36,11 +37,11 @@ def _resample(mask: np.ndarray, w: int, h: int) -> np.ndarray:
 def make_arrays(masks: dict, shape):
     """Silueta de cada vista remuestreada a la rejilla (filas de arriba a abajo, como la imagen)."""
     nx, ny, nz = shape
-    size = {"front": (nx, ny), "back": (nx, ny), "left": (nz, ny), "right": (nz, ny), "top": (nx, nz)}
+    size = {"front": (nx, ny), "back": (nx, ny), "left": (nz, ny), "right": (nz, ny), "top": (nx, nz), "bottom": (nx, nz)}
     return {k: _resample(m, *size[k]) for k, m in masks.items()}
 
 
-def compose(arrays: dict, shape, fl=False, fr=False, ft=False):
+def compose(arrays: dict, shape, fl=False, fr=False, ft=False, fb=False):
     """Casco visual suave: mínimo de las siluetas proyectadas. Devuelve (volumen[x,y,z], objetivos)."""
     nx, ny, nz = shape
     vol = np.ones(shape, np.float32)
@@ -64,6 +65,9 @@ def compose(arrays: dict, shape, fl=False, fr=False, ft=False):
     if "top" in arrays:
         t = arrays["top"]
         add((t[::-1] if ft else t).T, 1)
+    if "bottom" in arrays:   # por defecto el frente del objeto está en la parte superior de la imagen
+        t = arrays["bottom"]
+        add((t if fb else t[::-1]).T, 1)
     return vol, targets
 
 
@@ -79,10 +83,10 @@ def detect_orientation(masks: dict, dims, resolution: int = 48):
     """Prueba las combinaciones de volteo de las vistas laterales/superior y elige la más coherente."""
     shape, _ = grid_shape(dims, resolution)
     arrays = make_arrays(masks, shape)
-    present = [k for k in ("left", "right", "top") if k in masks]
+    present = [k for k in ("left", "right", "top", "bottom") if k in masks]
     best = []
     for flags in itertools.product((False, True), repeat=len(present)):
-        kw = {"f" + {"left": "l", "right": "r", "top": "t"}[k]: v for k, v in zip(present, flags)}
+        kw = {"f" + {"left": "l", "right": "r", "top": "t", "bottom": "b"}[k]: v for k, v in zip(present, flags)}
         vol, targets = compose(arrays, shape, **kw)
         best.append((_score(vol, targets), sum(flags), kw))
     top = max(b[0] for b in best)
