@@ -7,8 +7,13 @@ OPEN_ANGLE = 75.0     # grados de apertura (el signo se decide solo, hacia el la
 AXIS = np.array([1.0, 0.0, 0.0])
 
 
-def _cut(V, F, point, normal):
+def _cut(V, F, point, normal, button=None):
     d = (V - point) @ normal
+    g = None
+    if button:                            # disco del botón (cara frontal): entero a la tapa, con su hueco en la base
+        c, r = button["center"], button["radius"]
+        g = np.where(V[:, 2] > 0, r - np.hypot(V[:, 0] - c[0], V[:, 1] - c[1]), -1.0)
+        d = np.maximum(d, g)
     snap = 1e-6 * max(float(np.ptp(d)), 1e-9)
     on = np.abs(d) < snap                 # los vértices sobre el plano se reutilizan, no se parten las aristas
     up_v = (d > 0) | on
@@ -23,7 +28,8 @@ def _cut(V, F, point, normal):
         if key not in edge_map:
             t = d[a] / (d[a] - d[b])
             p = V[a] + t * (V[b] - V[a])
-            p = p - ((p - point) @ normal) * normal
+            if g is None or (g[a] <= 0 and g[b] <= 0):
+                p = p - ((p - point) @ normal) * normal
             edge_map[key] = len(V) + len(extra)
             extra.append(p)
         return edge_map[key]
@@ -132,7 +138,7 @@ def split_openable(V, F, opening):
     """Corta por el plano de 'opening' y vacía las dos piezas. Devuelve (fija, móvil, bisagra, eje, ángulo) o None.
     Cada pieza es (V, F, kind) con kind 0 = exterior, 1 = interior."""
     point, normal = np.asarray(opening["point"], np.float64), np.asarray(opening["normal"], np.float64)
-    Va, lower, upper, segs = _cut(V, F, point, normal)
+    Va, lower, upper, segs = _cut(V, F, point, normal, opening.get("button"))
     loop = _single_loop(segs)
     if loop is None or len(lower) < 4 or len(upper) < 4:
         return None

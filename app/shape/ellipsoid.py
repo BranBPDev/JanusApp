@@ -8,7 +8,7 @@ from app.shape.primitive import primitive_mesh
 
 TEX_WIDTH = 256
 STRIP = 8          # filas extra (solo en la vista previa) con los colores planos del interior
-PREVIEW_GRID = (32, 16)
+PREVIEW_GRID = (64, 32)
 
 
 def is_ellipsoid(params) -> bool:
@@ -128,6 +128,11 @@ def descriptor(ext_m, opening_info=None, opening=None, scale=1.0):
             "axis": list(opening_info["axis"]),
             "open_angle_deg": opening_info["angle"],
             "wall": WALL,
+            "button": None if not opening.get("button") else {
+                "center_xy": r(opening["button"]["center"]),
+                "radius": round(float(opening["button"]["radius"]) * scale, 5),
+                "note": "disco en la cara frontal (z > 0): pertenece entero a la parte móvil y deja su hueco en la fija",
+            },
             "interior_color": {k: np.round(_interior(v)).astype(int).tolist() for k, v in opening_info["colors"].items()},
         }
     return out

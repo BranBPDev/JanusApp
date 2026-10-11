@@ -4,6 +4,7 @@ import numpy as np
 #   rojo  -> línea de corte: por aquí se abre el objeto (tapa, boca, puerta...)
 #   verde -> punto dentro de la parte que se mueve (opcional; por defecto la parte de arriba del corte)
 #   azul  -> punto en la bisagra (opcional; por defecto el borde trasero del corte)
+#   amarillo -> círculo en la vista frontal (el botón): queda entero en la tapa y deja su hueco en la base
 
 
 def role(color_hex: str):
@@ -14,6 +15,8 @@ def role(color_hex: str):
         return "mueve"
     if b > 150 and r < 100 and g < 130:
         return "bisagra"
+    if r > 200 and g > 150 and b < 100:
+        return "boton"
     return None
 
 
@@ -88,4 +91,13 @@ def find_opening(marks: dict, dims_m, height_m):
             hinge = _to_world(key, *dots[0], dims)
             break
 
-    return {"point": point / height_m, "normal": normal, "hinge": None if hinge is None else hinge / height_m}, warnings
+    button = None                                       # círculo amarillo de la vista frontal: centro (x, y) y radio
+    for m in _marks(marks, "front", "boton"):
+        x0, y0, x1, y1 = m["bbox_m"]
+        button = {"center": [((x0 + x1) / 2 - dims[0] / 2) / height_m, ((y0 + y1) / 2) / height_m],
+                  "radius": ((x1 - x0) + (y1 - y0)) / 4 / height_m}
+        break
+
+    return {"point": point / height_m, "normal": normal, "hinge": None if hinge is None else hinge / height_m,
+            "button": button}, warnings
+
