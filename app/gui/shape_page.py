@@ -15,6 +15,9 @@ IMAGE_FILTER = "Imágenes (*.png *.jpg *.jpeg *.bmp *.webp *.tga *.tif *.tiff)"
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".webp", ".tga", ".tif", ".tiff"}
 GRID_WORDS = ("malla", "grid", "mesh")
 PREVIEW = 84
+INTERIOR_WORDS = ("interior", "interna", "interno", "inside", "dentro")
+INTERIOR_MOVING = ("tapa", "movil", "lid", "moving", "arriba", "top", "superior")
+INTERIOR_FIXED = ("base", "fija", "fijo", "fixed", "abajo", "bottom", "inferior")
 
 # (clave, título, palabras del nombre de archivo). Orden de la cuadrícula: 2 columnas x 3 filas.
 VIEWS = (
@@ -39,6 +42,21 @@ def classify(filename: str):
         if any(w in name for w in words):
             return key, is_grid
     return None, is_grid
+
+
+def classify_interior(filename: str):
+    """Textura interior a partir del nombre: ('movable',), ('fixed',) o ambas si no se indica la pieza. None si no es interior.
+    Ej.: 'pokeball_interior_tapa.png' -> ('movable',); 'pokeball_interior_base.png' -> ('fixed',)."""
+    name = _normalize(Path(filename).stem)
+    if not any(w in name for w in INTERIOR_WORDS):
+        return None
+    moving = any(w in name for w in INTERIOR_MOVING)
+    fixed = any(w in name for w in INTERIOR_FIXED)
+    if moving and not fixed:
+        return ("movable",)
+    if fixed and not moving:
+        return ("fixed",)
+    return ("movable", "fixed")
 
 
 def object_name(paths) -> str:
@@ -132,7 +150,7 @@ class Preview(QLabel):
 class ViewPair(QFrame):
     """Una vista (izquierda) y su malla (derecha)."""
 
-    def __init__(self, title: str):
+    def __init__(self, title: str, captions=("Vista", "Malla")):
         super().__init__(objectName="Card")
         lay = QVBoxLayout(self)
         lay.setContentsMargins(8, 6, 8, 8)
@@ -141,7 +159,7 @@ class ViewPair(QFrame):
         row = QHBoxLayout()
         row.setSpacing(8)
         self.view, self.grid = Preview(), Preview()
-        for preview, caption in ((self.view, "Vista"), (self.grid, "Malla")):
+        for preview, caption in ((self.view, captions[0]), (self.grid, captions[1])):
             col = QVBoxLayout()
             col.setSpacing(2)
             col.addWidget(preview)
@@ -177,17 +195,27 @@ class ShapePage(QWidget):
             pair = ViewPair(title)
             self.pairs[key] = pair
             grid.addWidget(pair, i // 2, i % 2)
-        lay.addLayout(grid)
 
+        # Textura interior (opcional): tapa (pieza móvil) y base (pieza fija). Solo se usa si el objeto se abre.
+        self.interior = ViewPair("Interior (opcional)", ("Tapa", "Base"))
+        self.interior.view.add_btn.setToolTip("Textura del interior de la tapa")
+        self.interior.grid.add_btn.setToolTip("Textura del interior de la base")
+        grid.addWidget(self.interior, 3, 0)
+
+        controls = QVBoxLayout()
+        controls.setSpacing(8)
         load = QPushButton("Cargar vistas y mallas...")
-        load.setToolTip("Elige todas las imágenes a la vez. Se asignan por el nombre: pokeball_frente.png y pokeball_frente_malla.png.")
+        load.setToolTip("Elige todas las imágenes a la vez. Se asignan por el nombre: pokeball_frente.png, "
+                        "pokeball_frente_malla.png, pokeball_interior_tapa.png y pokeball_interior_base.png.")
         load.clicked.connect(self._load_files)
-        lay.addWidget(load)
-
+        controls.addWidget(load)
         self.gen_btn = QPushButton("Generar modelo 3D", objectName="Primary")
         self.gen_btn.setCursor(Qt.PointingHandCursor)
         self.gen_btn.clicked.connect(self._generate)
-        lay.addWidget(self.gen_btn)
+        controls.addWidget(self.gen_btn)
+        controls.addStretch()
+        grid.addLayout(controls, 3, 1)
+        lay.addLayout(grid)
         self.progress = QProgressBar(textVisible=False)
         self.progress.setRange(0, 1000)
         self.status = QLabel("", objectName="Muted")
@@ -248,6 +276,11 @@ class ShapePage(QWidget):
         paths, _ = QFileDialog.getOpenFileNames(self, "Seleccionar vistas y mallas", "", IMAGE_FILTER)
         unknown = []
         for p in paths:
+            slots = classify_interior(p)
+            if slots:
+                for slot in slots:
+                    (self.interior.view if slot == "movable" else self.interior.grid).set_path(p)
+                continue
             key, is_grid = classify(p)
             if key is None:
                 unknown.append(Path(p).name)
@@ -268,7 +301,8 @@ class ShapePage(QWidget):
         self.gen_btn.setEnabled(False)
         self.warn.hide()
         self.progress.setValue(0)
-        self.worker = ShapeWorker(object_name([p for p in views.values() if p]), views, grids)
+        interiors = {"movable": self.interior.view.path, "fixed": self.interior.grid.path}
+        self.worker = ShapeWorker(object_name([p for p in views.values() if p]), views, grids, interiors)
         self.worker.progress.connect(self._on_progress)
         self.worker.finished_ok.connect(self._on_done)
         self.worker.failed.connect(self._on_failed)
@@ -289,7 +323,7 @@ class ShapePage(QWidget):
         self.open_btn.setEnabled(True)
         self.status.setText(f"Guardado en {root} ({result.info['seconds']} s)")
         for i, b in enumerate(self.lod_buttons):
-            b.setEnabled(i < len(result.lods) and not result.descriptor)
+            b.setEnabled(i < len(result.lods))
         self.lod_buttons[0].setChecked(True)
         self.open_slider.setValue(0)
         self.open_row.setVisible(result.lods[0].openable)
@@ -306,10 +340,13 @@ class ShapePage(QWidget):
         opens = " · se abre" if model.openable else ""
         if self.result.descriptor:
             kind = "Esfera" if self.result.descriptor["type"] == "sphere" else "Elipsoide"
+            tex_in = self.result.descriptor.get("opening", {}) or {}
+            tex_in = tex_in.get("interior_textures") or {}
+            inside = " · textura interior" if any(tex_in.values()) else ""
             self.info.setText(
-                f"{kind} paramétrico: 0 triángulos propios (el motor usa su {kind.lower()} compartida con esta textura)\n"
-                f"{w:.2f} × {h:.2f} × {d:.2f} m · textura {self.result.texture.shape[1]}×{self.result.texture.shape[0]}{opens}\n"
-                "La malla del visor es solo una vista previa y no se guarda.")
+                f"{kind}: {model.triangles:,} triángulos · {model.vertex_count:,} vértices · "
+                f"{w:.2f} × {h:.2f} × {d:.2f} m · textura {model.texture.shape[1]}×{model.texture.shape[0]}{opens}{inside}\n"
+                f"Se exporta como .glb ya cortado · piezas: {', '.join(p.name for p in model.parts)}")
             return
         shape = "primitiva simple" if self.result.info.get("mode") == "primitiva" else "volumen de las vistas"
         tex = f" · textura {model.texture.shape[1]}×{model.texture.shape[0]}" if model.texture is not None else ""

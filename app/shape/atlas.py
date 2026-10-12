@@ -84,7 +84,18 @@ class Atlas:
             self.block_uv.append(((x + BLOCK / 2) / tw, (by + BLOCK / 2) / th))
         self.texture = tex
         self.keys = keys
+        self.interior = None
         self.paint_blocks(NEUTRAL, NEUTRAL, under)
+
+    def add_interior(self, interior):
+        """Añade bajo el atlas las texturas interiores (si las hay). Las UV exteriores se calculan ya con el tamaño nuevo."""
+        self.interior = interior if interior is not None and interior.any else None
+        if self.interior is None:
+            return
+        self.texture, _ = self.interior.attach(self.texture, widen=True)
+        self.size = self.interior.size
+        tw, th = self.size
+        self.block_uv = [((x + BLOCK / 2) / tw, (by + BLOCK / 2) / th) for by, x in self._blocks]
 
     def paint_blocks(self, moving_color, fixed_color, under_color):
         """Colores planos: interior de la pieza móvil, interior de la fija y cara inferior sin vista."""

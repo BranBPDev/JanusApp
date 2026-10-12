@@ -6,6 +6,7 @@ import numpy as np
 from app.shape.atlas import Atlas
 from app.shape.cut import split_openable
 from app.shape.ellipsoid import bake_equirect, descriptor, is_ellipsoid, preview_model
+from app.shape.interior import Interior
 from app.shape.field import compose, compute_dims, detect_orientation, grid_shape, make_arrays
 from app.shape.mesh_ops import build_attributes, crease_normals, is_watertight, remove_small_components, taubin_smooth
 from app.shape.metric import CELL_M, analyze_overlay, metric_dims
@@ -41,10 +42,12 @@ def _report(cb, frac, msg):
         cb(frac, msg)
 
 
-def generate_shape(view_paths: dict, grid_paths: dict, progress=None) -> ShapeResult:
-    """Genera el objeto a partir de las vistas y sus mallas. Todo (tamaño, forma, apertura) sale de ellas."""
+def generate_shape(view_paths: dict, grid_paths: dict, progress=None, interior_paths: dict = None) -> ShapeResult:
+    """Genera el objeto a partir de las vistas y sus mallas. Todo (tamaño, forma, apertura) sale de ellas.
+    'interior_paths' ({'movable': ruta, 'fixed': ruta}) son las texturas interiores opcionales de la tapa y la base."""
     t0 = time.time()
     warnings = []
+    interior = Interior.load(interior_paths)
 
     given = {k: p for k, p in view_paths.items() if p}
     if "front" not in given or not ({"left", "right"} & set(given)):
@@ -89,6 +92,8 @@ def generate_shape(view_paths: dict, grid_paths: dict, progress=None) -> ShapeRe
     # Apertura (marcas de las mallas)
     opening, open_warnings = find_opening(marks, (mw, mh, md), mh)
     warnings += open_warnings
+    if interior.any and not opening:
+        warnings.append("Se ignoran las texturas interiores: el objeto no tiene línea de corte (no se abre).")
 
     # Orientación de las vistas y forma: primitiva simple si explica las siluetas, si no volumen de las vistas
     _report(progress, 0.08, "Analizando la forma del objeto...")
@@ -101,7 +106,7 @@ def generate_shape(view_paths: dict, grid_paths: dict, progress=None) -> ShapeRe
     primitive, iou = fit_primitive(make_arrays(masks, low_shape), low_shape, flips)
 
     if is_ellipsoid(primitive):
-        return _ellipsoid(masks, images, dims, flips, mh, opening, iou, marks, metric, warnings, progress, t0)
+        return _ellipsoid(masks, images, dims, flips, mh, opening, iou, marks, metric, warnings, progress, t0, interior)
 
     if primitive:
         ext = np.array([w, 1.0, d])
@@ -140,6 +145,8 @@ def generate_shape(view_paths: dict, grid_paths: dict, progress=None) -> ShapeRe
     _report(progress, 0.68, "Preparando textura...")
     box_lo = np.array([-ext[0] / 2, 0.0, -ext[2] / 2])
     atlas = Atlas(images, masks, (box_lo, box_lo + ext), flips)
+    if opening:
+        atlas.add_interior(interior)
     crease = 60.0 if primitive and is_round(primitive) else 40.0
     scale = mh / float(ext[1])
 
@@ -153,6 +160,8 @@ def generate_shape(view_paths: dict, grid_paths: dict, progress=None) -> ShapeRe
         lods.append(Model(parts, atlas.texture).scaled(scale, scale))
     if opening and not openable:
         warnings.append("No se pudo abrir el objeto por la línea de corte marcada (el corte no da una sola sección).")
+    if interior.any and opening and not openable:
+        warnings.append("Se ignoran las texturas interiores: el objeto no se pudo abrir.")
 
     info = {
         "mode": "primitiva" if primitive else "volumen",
@@ -184,6 +193,9 @@ def _build_parts(V, F, opening, atlas, crease):
     tex = atlas.texture
     for name, v, f, kind, interior_uv, extra in specs:
         uvs = atlas.corner_uvs(v, f, kind, interior_uv)
+        if atlas.interior is not None and split is not None and name in ("movable", "fixed"):
+            uvs = atlas.interior.remap(uvs, kind, v, f, name, opening["normal"], opening["point"],
+                                       (atlas.ext[0], atlas.ext[2]))
         c = uvs[kind == 0].mean(axis=1)
         th, tw = tex.shape[:2]
         colors[name] = tex[np.clip((c[:, 1] * th).astype(int), 0, th - 1), np.clip((c[:, 0] * tw).astype(int), 0, tw - 1), :3].mean(axis=0)
@@ -192,7 +204,7 @@ def _build_parts(V, F, opening, atlas, crease):
     return parts, split is not None, colors
 
 
-def _ellipsoid(masks, images, dims, flips, height_m, opening, iou, marks, metric, warnings, progress, t0):
+def _ellipsoid(masks, images, dims, flips, height_m, opening, iou, marks, metric, warnings, progress, t0, interior=None):
     """Esfera o elipsoide: el objeto es solo una descripción paramétrica + textura (0 triángulos propios)."""
     w, _, d = dims
     ext = np.array([w, 1.0, d])
@@ -201,13 +213,15 @@ def _ellipsoid(masks, images, dims, flips, height_m, opening, iou, marks, metric
     _report(progress, 0.3, "Pintando la textura...")
     texture = bake_equirect(images, masks, ext, flips)
     _report(progress, 0.6, "Preparando la vista previa...")
-    model, open_info = preview_model(ext, texture, opening)
+    model, open_info = preview_model(ext, texture, opening, interior)
     if opening and open_info is None:
         warnings.append("No se pudo abrir el objeto por la línea de corte marcada (el corte no da una sola sección).")
-    desc = descriptor(ext * scale, open_info, opening, scale)
+        if interior and interior.any:
+            warnings.append("Se ignoran las texturas interiores: el objeto no se pudo abrir.")
+    desc = descriptor(ext * scale, open_info, opening, scale, model.triangles)
 
     info = {"mode": "primitiva", "primitive": {"type": desc["type"]}, "primitive_iou": round(float(iou), 4),
-            "openable": open_info is not None, "texture": list(texture.shape[:2]), "triangles": [0],
+            "openable": open_info is not None, "texture": list(model.texture.shape[:2]), "triangles": [model.triangles],
             "size": [round(float(x), 4) for x in ext * scale], "seconds": round(time.time() - t0, 2),
             "metric": metric}
     _report(progress, 0.92, "Modelo generado")

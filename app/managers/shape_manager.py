@@ -13,15 +13,16 @@ class ShapeWorker(QThread):
     finished_ok = Signal(object, str)   # ShapeResult, carpeta del proyecto
     failed = Signal(str)
 
-    def __init__(self, name: str, view_paths: dict, grid_paths: dict):
+    def __init__(self, name: str, view_paths: dict, grid_paths: dict, interior_paths: dict = None):
         super().__init__()
         self.name, self.view_paths, self.grid_paths = name, view_paths, grid_paths
+        self.interior_paths = interior_paths or {}
 
     def run(self):
         try:
-            result = generate_shape(self.view_paths, self.grid_paths, lambda f, m: self.progress.emit(f, m))
+            result = generate_shape(self.view_paths, self.grid_paths, lambda f, m: self.progress.emit(f, m), self.interior_paths)
             self.progress.emit(0.95, "Guardando proyecto...")
-            root = save_shape(self.name, self.view_paths, self.grid_paths, result)
+            root = save_shape(self.name, self.view_paths, self.grid_paths, result, self.interior_paths)
             log.info(f"Forma generada en {root}: {result.info}")
             self.progress.emit(1.0, "Completado")
             self.finished_ok.emit(result, str(root))
