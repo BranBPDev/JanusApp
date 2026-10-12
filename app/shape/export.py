@@ -6,6 +6,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from app.shape.model import Model, Part
+
 
 def texture_png(texture: np.ndarray) -> bytes:
     buf = io.BytesIO()
@@ -32,6 +34,35 @@ def write_obj(path, model, name="objeto"):
     lines += ["usemtl janus"] + v + vt + vn + faces
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     mtl.write_text("newmtl janus\nKd 1 1 1\n" + ("map_Kd texture.png\n" if model.texture is not None else ""), encoding="utf-8")
+
+
+def read_obj(path, texture=None) -> Model:
+    """Lee el OBJ escrito por write_obj (pose de reposo, un grupo por pieza) y devuelve un Model.
+    Las propiedades de la jerarquía (parent, origin, axis, open_angle) no van en el OBJ: las añade quien lo llama."""
+    v, vt, vn, groups = [], [], [], {}
+    cur = None
+    for line in Path(path).read_text(encoding="utf-8").splitlines():
+        tag, _, rest = line.partition(" ")
+        if tag == "v":
+            v.append([float(x) for x in rest.split()])
+        elif tag == "vt":
+            u, w = rest.split()[:2]
+            vt.append([float(u), 1.0 - float(w)])   # el OBJ tiene el origen de v abajo
+        elif tag == "vn":
+            vn.append([float(x) for x in rest.split()])
+        elif tag == "g":
+            cur = groups.setdefault(rest.strip(), [])
+        elif tag == "f" and cur is not None:
+            cur.append([int(c.split("/")[0]) - 1 for c in rest.split()])
+    V, VT, VN = np.array(v, np.float32), np.array(vt, np.float32), np.array(vn, np.float32)
+    parts = []
+    for name, faces in groups.items():
+        F = np.array(faces, np.int32)
+        used = np.unique(F)
+        remap = np.zeros(len(V), np.int32)
+        remap[used] = np.arange(len(used))
+        parts.append(Part(name, V[used], remap[F], VN[used], VT[used] if len(VT) == len(V) else None))
+    return Model(parts, texture)
 
 
 def _pad(data: bytes, byte: bytes = b"\x00") -> bytes:

@@ -5,7 +5,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from app.shape.export import texture_png, write_glb, write_obj
+import numpy as np
+from PIL import Image
+
+from app.shape.export import read_obj, texture_png, write_glb, write_obj
 from app.shape.naming import IMAGE_SUFFIXES
 from app.shape.pipeline import ShapeResult
 from app.utils.json_util import read_json, save_json
@@ -96,15 +99,6 @@ class ProjectInfo:
     updated: str = ""
     triangles: int = 0
     openable: bool = False
-    thumbnail: Optional[Path] = None
-
-
-def _first_image(root: Path, rels: dict) -> Optional[Path]:
-    for key in ("front", *rels):
-        rel = rels.get(key)
-        if rel and (root / rel).is_file():
-            return root / rel
-    return None
 
 
 def list_projects() -> list:
@@ -120,7 +114,7 @@ def list_projects() -> list:
             found.append(ProjectInfo(
                 name=manifest.get("name") or root.name, root=root, updated=manifest.get("updated", ""),
                 triangles=int(tri[0]) if isinstance(tri, list) else int(tri),
-                openable=bool(shape.get("openable")), thumbnail=_first_image(root, manifest.get("views", {}))))
+                openable=bool(shape.get("openable"))))
     return sorted(found, key=lambda p: p.updated, reverse=True)
 
 
@@ -131,3 +125,21 @@ def load_project_inputs(name: str) -> dict:
     return {key: {k: str(root / rel) for k, rel in manifest.get(key, {}).items()
                   if (root / rel).suffix.lower() in IMAGE_SUFFIXES and (root / rel).is_file()}
             for key in INPUT_FOLDERS}
+
+
+def load_model(root: Path):
+    """Reconstruye el modelo guardado (LOD0: OBJ + textura + jerarquía del manifest) o None si no se puede leer."""
+    try:
+        texture_file = root / "shape" / "texture.png"
+        texture = np.asarray(Image.open(texture_file).convert("RGBA"), np.uint8) if texture_file.is_file() else None
+        model = read_obj(root / "shape" / "lod0.obj", texture)
+        info = {p["name"]: p for p in _read_manifest(root).get("shape", {}).get("parts", [])}
+        for part in model.parts:
+            extra = info.get(part.name)
+            if extra:
+                part.parent, part.origin = extra.get("parent"), tuple(extra.get("origin", (0.0, 0.0, 0.0)))
+                part.axis = tuple(extra["axis"]) if extra.get("axis") else None
+                part.open_angle = extra.get("open_angle_deg", 0.0)
+        return model
+    except Exception:
+        return None

@@ -1,13 +1,14 @@
 from datetime import datetime
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QFrame, QGridLayout, QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget
+from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget
 
-from app.gui.widgets import icon_button, make_card, page_layout, set_thumbnail
-from app.shape.project import ProjectInfo, list_projects
+from app.gui.viewer import render_thumbnail
+from app.gui.widgets import icon_button, make_card, page_layout
+from app.shape.project import list_projects, load_model
 
-COLUMNS = 3
-THUMB = 84
+THUMB = 64
+_thumbs = {}   # (carpeta, fecha de modificación) -> miniatura ya renderizada
 
 
 def _date(iso: str) -> str:
@@ -17,33 +18,12 @@ def _date(iso: str) -> str:
         return "-"
 
 
-class ProjectCard(QFrame):
-    """Tarjeta de un proyecto local con su miniatura y el lápiz para editarlo."""
-
-    def __init__(self, info: ProjectInfo, on_edit):
-        super().__init__(objectName="Card")
-        row = QHBoxLayout(self)
-        row.setContentsMargins(12, 12, 12, 12)
-        row.setSpacing(12)
-
-        thumb = QLabel(objectName="Thumb")
-        thumb.setFixedSize(THUMB, THUMB)
-        thumb.setAlignment(Qt.AlignCenter)
-        set_thumbnail(thumb, info.thumbnail, THUMB - 4)
-        row.addWidget(thumb)
-
-        text = QVBoxLayout()
-        text.setSpacing(2)
-        text.addWidget(QLabel(info.name, objectName="Brand"))
-        opens = " · se abre" if info.openable else ""
-        text.addWidget(QLabel(f"{info.triangles:,} triángulos{opens}", objectName="Muted"))
-        text.addWidget(QLabel(_date(info.updated), objectName="Muted"))
-        text.addStretch()
-        row.addLayout(text, 1)
-
-        edit = icon_button("edit", "#8A90A6", "IconEdit", "Editar las vistas y volver a generar", size=30)
-        edit.clicked.connect(lambda: on_edit(info.name))
-        row.addWidget(edit, 0, Qt.AlignTop)
+def _thumbnail(info):
+    key = (str(info.root), info.updated)
+    if key not in _thumbs:
+        model = load_model(info.root)
+        _thumbs[key] = render_thumbnail(model, THUMB) if model is not None else None
+    return _thumbs[key]
 
 
 class HomePage(QWidget):
@@ -65,24 +45,68 @@ class HomePage(QWidget):
         self.empty = QLabel("Aún no hay proyectos. Genera uno en la pestaña Forma.", objectName="Muted")
         lay.addWidget(self.empty)
 
-        self.grid = QGridLayout()
-        self.grid.setSpacing(12)
-        self.grid.setAlignment(Qt.AlignTop)
+        # Una sola lista que se rellena sola con los datos de los proyectos guardados; ocupa lo que ocupe su contenido.
+        self.rows = QVBoxLayout()
+        self.rows.setContentsMargins(0, 0, 0, 0)
+        self.rows.setSpacing(0)
+        self.list = QFrame(objectName="List")
+        self.list.setLayout(self.rows)
         holder = QWidget()
-        holder.setLayout(self.grid)
+        holder_lay = QVBoxLayout(holder)
+        holder_lay.setContentsMargins(0, 0, 0, 0)
+        holder_lay.addWidget(self.list)
+        holder_lay.addStretch()
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setWidget(holder)
         lay.addWidget(scroll, 1)
+        self._pending = []
         self.refresh()
 
+    def _add_row(self, info):
+        row = QFrame(objectName="Row")
+        h = QHBoxLayout(row)
+        h.setContentsMargins(14, 8, 14, 8)
+        h.setSpacing(14)
+
+        thumb = QLabel()
+        thumb.setFixedSize(THUMB, THUMB)
+        thumb.setAlignment(Qt.AlignCenter)
+        h.addWidget(thumb)
+
+        text = QVBoxLayout()
+        text.setSpacing(2)
+        text.addWidget(QLabel(info.name, objectName="Brand"))
+        opens = " · se abre" if info.openable else ""
+        text.addWidget(QLabel(f"{info.triangles:,} triángulos{opens} · {_date(info.updated)}", objectName="Muted"))
+        h.addLayout(text, 1)
+
+        edit = icon_button("edit", "#8A90A6", "IconEdit", "Editar las vistas y volver a generar", size=30)
+        edit.clicked.connect(lambda: self.edit_requested.emit(info.name))
+        h.addWidget(edit)
+        self.rows.addWidget(row)
+        self._pending.append((thumb, info))
+
     def refresh(self):
-        """Vuelve a leer los proyectos guardados en local."""
-        while self.grid.count():
-            self.grid.takeAt(0).widget().deleteLater()
+        """Vuelve a leer los proyectos guardados en local y reconstruye la lista."""
+        while self.rows.count():
+            self.rows.takeAt(0).widget().deleteLater()
+        self._pending = []
         projects = list_projects()
         self.empty.setVisible(not projects)
-        for i, info in enumerate(projects):
-            self.grid.addWidget(ProjectCard(info, self.edit_requested.emit), i // COLUMNS, i % COLUMNS)
-        for c in range(COLUMNS):
-            self.grid.setColumnStretch(c, 1)
+        self.list.setVisible(bool(projects))
+        for info in projects:
+            self._add_row(info)
+        QTimer.singleShot(0, self._fill_next)   # las miniaturas se renderizan de una en una para no bloquear la ventana
+
+    def _fill_next(self):
+        if not self._pending:
+            return
+        thumb, info = self._pending.pop(0)
+        try:
+            pix = _thumbnail(info)
+            if pix is not None:
+                thumb.setPixmap(pix)
+        except RuntimeError:   # la fila se ha destruido por un refresco
+            pass
+        QTimer.singleShot(0, self._fill_next)

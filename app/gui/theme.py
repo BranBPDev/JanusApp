@@ -73,6 +73,8 @@ QToolButton#IconAdd:hover { background: rgba(34, 197, 94, 70); }
 QToolButton#IconDel { border: 2px solid #EF4444; }
 QToolButton#IconDel:hover { background: rgba(239, 68, 68, 70); }
 
+QFrame#List { background: $surface; border: 1px solid $border; border-radius: 12px; }
+QFrame#Row { background: transparent; border: none; border-bottom: 1px solid $border; }
 QToolButton#IconEdit { background: $elevated; border: 1px solid $border; border-radius: 8px; padding: 0; }
 QToolButton#IconEdit:hover { border-color: $accent; background: $accent_soft; }
 
