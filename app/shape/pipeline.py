@@ -8,6 +8,7 @@ from app.shape.cut import split_openable
 from app.shape.ellipsoid import bake_equirect, descriptor, is_ellipsoid, preview_model
 from app.shape.interior import Interior
 from app.shape.field import compose, compute_dims, detect_orientation, grid_shape, make_arrays
+from app.shape.naming import VIEW_NAMES
 from app.shape.mesh_ops import build_attributes, crease_normals, is_watertight, remove_small_components, taubin_smooth
 from app.shape.metric import CELL_M, analyze_overlay, metric_dims
 from app.shape.model import Model, Part
@@ -17,8 +18,6 @@ from app.shape.primitive import fit_primitive, is_round, primitive_mesh
 from app.shape.qem import decimate
 from app.shape.surface_nets import surface_nets
 
-VIEW_NAMES = {"front": "frente", "back": "detrás", "left": "izquierda", "right": "derecha", "top": "arriba",
-              "bottom": "abajo"}
 LOD_TOLERANCE = (0.02, 0.04, 0.08, 0.15)   # error medio admitido por nivel (fracción del tamaño del objeto)
 PRIMITIVE_GRID_ROUND = ((12, 6), (8, 4), (6, 2), (4, 2))   # (lados, anillos) por nivel
 PRIMITIVE_GRID_SHARP = ((16, 8), (12, 6), (8, 4), (8, 4))

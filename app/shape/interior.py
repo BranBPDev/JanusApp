@@ -3,7 +3,9 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-NAMES = ("movable", "fixed")   # tapa (pieza móvil) y base (pieza fija)
+from app.shape.naming import INTERIOR_KEYS
+
+NAMES = INTERIOR_KEYS   # tapa (pieza móvil) y base (pieza fija)
 MAX_CELL = 512
 
 

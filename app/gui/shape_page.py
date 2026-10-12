@@ -1,179 +1,28 @@
-import unicodedata
 from pathlib import Path
 
-from PySide6.QtCore import QPointF, Qt, QUrl
-from PySide6.QtGui import QColor, QDesktopServices, QIcon, QPainter, QPen, QPixmap, QPolygonF
+from PySide6.QtCore import Qt, QUrl, Signal
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
-    QButtonGroup, QCheckBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QProgressBar, QPushButton,
-    QSlider, QToolButton, QVBoxLayout, QWidget,
+    QButtonGroup, QCheckBox, QFileDialog, QGridLayout, QHBoxLayout, QLabel, QProgressBar, QPushButton, QSlider,
+    QVBoxLayout, QWidget,
 )
 
 from app.gui.viewer import MeshViewer
+from app.gui.widgets import ViewPair
 from app.managers.shape_manager import ShapeWorker
-
-IMAGE_FILTER = "Imágenes (*.png *.jpg *.jpeg *.bmp *.webp *.tga *.tif *.tiff)"
-IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".webp", ".tga", ".tif", ".tiff"}
-GRID_WORDS = ("malla", "grid", "mesh")
-PREVIEW = 84
-INTERIOR_WORDS = ("interior", "interna", "interno", "inside", "dentro")
-INTERIOR_MOVING = ("tapa", "movil", "lid", "moving", "arriba", "top", "superior")
-INTERIOR_FIXED = ("base", "fija", "fijo", "fixed", "abajo", "bottom", "inferior")
-
-# (clave, título, palabras del nombre de archivo). Orden de la cuadrícula: 2 columnas x 3 filas.
-VIEWS = (
-    ("front", "Frente", ("front", "frente", "delante", "frontal")),
-    ("back", "Detrás", ("back", "atras", "detras", "trasera", "posterior", "rear")),
-    ("left", "Izquierda", ("left", "izq")),
-    ("right", "Derecha", ("right", "der")),
-    ("top", "Arriba", ("top", "arriba", "superior", "cenital")),
-    ("bottom", "Abajo", ("bottom", "abajo", "inferior", "debajo")),
-)
-
-
-def _normalize(text: str) -> str:
-    return "".join(c for c in unicodedata.normalize("NFD", text.lower()) if unicodedata.category(c) != "Mn")
-
-
-def classify(filename: str):
-    """(vista o None, es_malla) a partir del nombre del archivo. Ej.: 'pokeball_frente_malla.png' -> ('front', True)."""
-    name = _normalize(Path(filename).stem)
-    is_grid = any(w in name for w in GRID_WORDS)
-    for key, _, words in sorted(VIEWS, key=lambda v: v[0] not in ("left", "right")):  # izquierda/derecha primero
-        if any(w in name for w in words):
-            return key, is_grid
-    return None, is_grid
-
-
-def classify_interior(filename: str):
-    """Textura interior a partir del nombre: ('movable',), ('fixed',) o ambas si no se indica la pieza. None si no es interior.
-    Ej.: 'pokeball_interior_tapa.png' -> ('movable',); 'pokeball_interior_base.png' -> ('fixed',)."""
-    name = _normalize(Path(filename).stem)
-    if not any(w in name for w in INTERIOR_WORDS):
-        return None
-    moving = any(w in name for w in INTERIOR_MOVING)
-    fixed = any(w in name for w in INTERIOR_FIXED)
-    if moving and not fixed:
-        return ("movable",)
-    if fixed and not moving:
-        return ("fixed",)
-    return ("movable", "fixed")
-
-
-def object_name(paths) -> str:
-    """Nombre del objeto: lo que queda del nombre del primer archivo al quitar la vista y 'malla'."""
-    words = {w for _, _, ws in VIEWS for w in ws} | set(GRID_WORDS)
-    for p in paths:
-        tokens = [t for t in _normalize(Path(p).stem).replace("-", "_").replace(" ", "_").split("_")
-                  if t and not any(t == w or t.startswith(w) for w in words)]
-        if tokens:
-            return "_".join(tokens)
-    return "objeto"
-
-
-def _icon(kind: str, color: str) -> QIcon:
-    pm = QPixmap(32, 32)
-    pm.fill(Qt.transparent)
-    p = QPainter(pm)
-    p.setRenderHint(QPainter.Antialiasing)
-    p.setPen(QPen(QColor(color), 3, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    if kind == "plus":
-        p.drawLine(16, 8, 16, 24)
-        p.drawLine(8, 16, 24, 16)
-    else:  # papelera
-        p.drawLine(8, 10, 24, 10)
-        p.drawPolyline(QPolygonF([QPointF(13, 10), QPointF(13, 7), QPointF(19, 7), QPointF(19, 10)]))
-        p.drawPolyline(QPolygonF([QPointF(10, 10), QPointF(11, 25), QPointF(21, 25), QPointF(22, 10)]))
-        p.drawLine(14, 14, 14, 21)
-        p.drawLine(18, 14, 18, 21)
-    p.end()
-    return QIcon(pm)
-
-
-class Preview(QLabel):
-    """Cuadro de previsualización con un botón + (verde) y una papelera (roja) superpuestos."""
-
-    def __init__(self):
-        super().__init__(objectName="Thumb")
-        self.path = None
-        self.setFixedSize(PREVIEW, PREVIEW)
-        self.setAlignment(Qt.AlignCenter)
-        self.setAcceptDrops(True)
-
-        self.add_btn = QToolButton(self, objectName="IconAdd")
-        self.add_btn.setIcon(_icon("plus", "#22C55E"))
-        self.add_btn.setFixedSize(24, 24)
-        self.add_btn.move(4, 4)
-        self.add_btn.setCursor(Qt.PointingHandCursor)
-        self.add_btn.setToolTip("Elegir imagen")
-        self.add_btn.clicked.connect(self._pick)
-
-        self.del_btn = QToolButton(self, objectName="IconDel")
-        self.del_btn.setIcon(_icon("trash", "#EF4444"))
-        self.del_btn.setFixedSize(24, 24)
-        self.del_btn.move(PREVIEW - 28, 4)
-        self.del_btn.setCursor(Qt.PointingHandCursor)
-        self.del_btn.setToolTip("Quitar imagen")
-        self.del_btn.clicked.connect(lambda: self.set_path(None))
-        self._refresh()
-
-    def _pick(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Seleccionar imagen", "", IMAGE_FILTER)
-        if path:
-            self.set_path(path)
-
-    def set_path(self, path):
-        self.path = path
-        self._refresh()
-
-    def _refresh(self):
-        pix = QPixmap(self.path) if self.path else QPixmap()
-        if pix.isNull():
-            self.clear()
-        else:
-            self.setPixmap(pix.scaled(PREVIEW - 4, PREVIEW - 4, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-        self.del_btn.setVisible(bool(self.path))
-        self.add_btn.raise_()
-        self.del_btn.raise_()
-
-    def dragEnterEvent(self, e):
-        if e.mimeData().hasUrls():
-            e.acceptProposedAction()
-
-    def dropEvent(self, e):
-        for url in e.mimeData().urls():
-            p = url.toLocalFile()
-            if Path(p).suffix.lower() in IMAGE_SUFFIXES:
-                self.set_path(p)
-                break
-
-
-class ViewPair(QFrame):
-    """Una vista (izquierda) y su malla (derecha)."""
-
-    def __init__(self, title: str, captions=("Vista", "Malla")):
-        super().__init__(objectName="Card")
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(8, 6, 8, 8)
-        lay.setSpacing(4)
-        lay.addWidget(QLabel(title, objectName="Brand"))
-        row = QHBoxLayout()
-        row.setSpacing(8)
-        self.view, self.grid = Preview(), Preview()
-        for preview, caption in ((self.view, captions[0]), (self.grid, captions[1])):
-            col = QVBoxLayout()
-            col.setSpacing(2)
-            col.addWidget(preview)
-            col.addWidget(QLabel(caption, objectName="CardTitle", alignment=Qt.AlignCenter))
-            row.addLayout(col)
-        lay.addLayout(row)
+from app.shape.naming import IMAGE_FILTER, VIEWS, classify, classify_interior, object_name
+from app.shape.project import load_project_inputs
 
 
 class ShapePage(QWidget):
+    saved = Signal()   # se ha guardado un proyecto (la lista de Inicio debe refrescarse)
+
     def __init__(self):
         super().__init__()
         self.worker = None
         self.result = None
         self.project_root = None
+        self.project_name = None   # proyecto existente que se está editando (None = proyecto nuevo)
         self.pairs = {}
 
         root = QHBoxLayout(self)
@@ -213,6 +62,14 @@ class ShapePage(QWidget):
         self.gen_btn.setCursor(Qt.PointingHandCursor)
         self.gen_btn.clicked.connect(self._generate)
         controls.addWidget(self.gen_btn)
+        self.editing = QLabel("", objectName="Muted")
+        self.editing.setWordWrap(True)
+        controls.addWidget(self.editing)
+        self.new_btn = QPushButton("Nuevo proyecto")
+        self.new_btn.setToolTip("Vacía las imágenes y empieza un proyecto nuevo.")
+        self.new_btn.clicked.connect(self.new_project)
+        self.new_btn.hide()
+        controls.addWidget(self.new_btn)
         controls.addStretch()
         grid.addLayout(controls, 3, 1)
         lay.addLayout(grid)
@@ -271,6 +128,48 @@ class ShapePage(QWidget):
         right.addWidget(self.warn)
         root.addLayout(right, 1)
 
+    # ---------- Proyectos ----------
+    def _set_inputs(self, views: dict, grids: dict, interiors: dict):
+        for key, pair in self.pairs.items():
+            pair.set_paths(views.get(key), grids.get(key))
+        self.interior.set_paths(interiors.get("movable"), interiors.get("fixed"))
+
+    def _set_project(self, name):
+        self.project_name = name
+        self.editing.setText(f"Editando: {name}" if name else "")
+        self.new_btn.setVisible(bool(name))
+
+    def _reset_result(self):
+        self.result, self.project_root = None, None
+        self.viewer.set_model(None)
+        self.open_row.hide()
+        self.open_slider.setValue(0)
+        self.open_btn.setEnabled(False)
+        self.info.clear()
+        self.warn.hide()
+        self.progress.setValue(0)
+        for b in self.lod_buttons:
+            b.setEnabled(False)
+
+    def load_project(self, name: str):
+        """Carga las vistas, mallas y texturas interiores de un proyecto guardado para editarlas y volver a generar."""
+        if self.worker is not None and self.worker.isRunning():
+            self.status.setText("Espera a que termine la generación en curso.")
+            return
+        inputs = load_project_inputs(name)
+        self._set_inputs(inputs["views"], inputs["grids"], inputs["interiors"])
+        self._reset_result()
+        self._set_project(name)
+        self.status.setText("Cambia las imágenes que quieras y pulsa «Generar modelo 3D» para actualizar el proyecto.")
+
+    def new_project(self):
+        if self.worker is not None and self.worker.isRunning():
+            return
+        self._set_inputs({}, {}, {})
+        self._reset_result()
+        self._set_project(None)
+        self.status.clear()
+
     # ---------- Acciones ----------
     def _load_files(self):
         paths, _ = QFileDialog.getOpenFileNames(self, "Seleccionar vistas y mallas", "", IMAGE_FILTER)
@@ -302,7 +201,8 @@ class ShapePage(QWidget):
         self.warn.hide()
         self.progress.setValue(0)
         interiors = {"movable": self.interior.view.path, "fixed": self.interior.grid.path}
-        self.worker = ShapeWorker(object_name([p for p in views.values() if p]), views, grids, interiors)
+        name = self.project_name or object_name([p for p in views.values() if p])
+        self.worker = ShapeWorker(name, views, grids, interiors)
         self.worker.progress.connect(self._on_progress)
         self.worker.finished_ok.connect(self._on_done)
         self.worker.failed.connect(self._on_failed)
@@ -319,6 +219,7 @@ class ShapePage(QWidget):
 
     def _on_done(self, result, root):
         self.result, self.project_root = result, root
+        self._set_project(self.worker.name)
         self.gen_btn.setEnabled(True)
         self.open_btn.setEnabled(True)
         self.status.setText(f"Guardado en {root} ({result.info['seconds']} s)")
@@ -331,6 +232,7 @@ class ShapePage(QWidget):
         if result.warnings:
             self.warn.setText("\n".join(result.warnings))
             self.warn.show()
+        self.saved.emit()
 
     def _show_lod(self, index):
         model = self.result.lods[index]

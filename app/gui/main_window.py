@@ -5,7 +5,9 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
+from app.gui.home_page import HomePage
 from app.gui.shape_page import ShapePage
+from app.gui.widgets import page_layout
 from app.utils.paths_util import APP_NAME, LOGO_PNG
 from app.utils.update_util import get_local_info
 
@@ -20,41 +22,10 @@ SECTIONS = [
 ]
 
 
-def make_card(title: str, value: str) -> QFrame:
-    card = QFrame(objectName="Card")
-    lay = QVBoxLayout(card)
-    lay.setContentsMargins(20, 16, 20, 16)
-    lay.setSpacing(4)
-    lay.addWidget(QLabel(title, objectName="CardTitle"))
-    lay.addWidget(QLabel(value, objectName="CardValue"))
-    return card
-
-
-class HomePage(QWidget):
-    def __init__(self, info: dict):
-        super().__init__()
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(36, 32, 36, 32)
-        lay.setSpacing(6)
-        lay.addWidget(QLabel("Bienvenido a Janus", objectName="Title"))
-        lay.addWidget(QLabel("Conversión de vistas 2D en modelos 3D optimizados.", objectName="Subtitle"))
-        lay.addSpacing(20)
-
-        row = QHBoxLayout()
-        row.setSpacing(16)
-        row.addWidget(make_card("Versión", f"v{info.get('version', '?')}"))
-        row.addWidget(make_card("Publicada", str(info.get("releaseDate", "-"))))
-        row.addWidget(make_card("Autor", str(info.get("author", "-"))))
-        lay.addLayout(row)
-        lay.addStretch()
-
-
 class PlaceholderPage(QWidget):
     def __init__(self, title: str):
         super().__init__()
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(36, 32, 36, 32)
-        lay.addWidget(QLabel(title, objectName="Title"))
+        lay = page_layout(self, title)
         lay.addStretch()
         lay.addWidget(QLabel("Próximamente", objectName="Subtitle", alignment=Qt.AlignCenter))
         lay.addStretch()
@@ -93,6 +64,7 @@ class MainWindow(QMainWindow):
         side.addSpacing(20)
 
         self.stack = QStackedWidget()
+        self.pages = {}
         self.nav = QButtonGroup(self)
         self.nav.setExclusive(True)
         for index, (key, text) in enumerate(SECTIONS):
@@ -101,9 +73,12 @@ class MainWindow(QMainWindow):
             self.nav.addButton(button, index)
             side.addWidget(button)
             page = HomePage(info) if key == "home" else ShapePage() if key == "shape" else PlaceholderPage(text)
+            self.pages[key] = page
             self.stack.addWidget(page)
-        self.nav.idClicked.connect(self.stack.setCurrentIndex)
+        self.nav.idClicked.connect(self._show_section)
         self.nav.button(0).setChecked(True)
+        self.pages["home"].edit_requested.connect(self._edit_project)
+        self.pages["shape"].saved.connect(self.pages["home"].refresh)
 
         side.addStretch()
         side.addWidget(QLabel(f"v{info.get('version', '?')}", objectName="Muted"))
@@ -112,6 +87,16 @@ class MainWindow(QMainWindow):
         main.addWidget(self.stack, 1)
 
         self.statusBar().showMessage("Listo")
+
+    def _show_section(self, index: int):
+        self.stack.setCurrentIndex(index)
+        if SECTIONS[index][0] == "home":
+            self.pages["home"].refresh()
+
+    def _edit_project(self, name: str):
+        """Abre un proyecto existente en la pestaña Forma para cambiar sus vistas y volver a generarlo."""
+        self.pages["shape"].load_project(name)
+        self.nav.button([k for k, _ in SECTIONS].index("shape")).click()
 
     def notify(self, message: str, msec: int = 8000):
         self.statusBar().showMessage(message, msec)
