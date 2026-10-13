@@ -5,6 +5,7 @@ import numpy as np
 #   verde -> punto dentro de la parte que se mueve (opcional; por defecto la parte de arriba del corte)
 #   azul  -> punto en la bisagra (opcional; por defecto el borde trasero del corte)
 #   amarillo -> círculo en la vista frontal (el botón): queda entero en la tapa y deja su hueco en la base
+#   violeta  -> contorno de un saliente (tapa, cierre...) visto de frente: huella de lo que sobresale del cuerpo
 
 
 def role(color_hex: str):
@@ -17,6 +18,8 @@ def role(color_hex: str):
         return "bisagra"
     if r > 200 and g > 150 and b < 100:
         return "boton"
+    if r > 130 and g < 110 and b > 150:
+        return "saliente"
     return None
 
 

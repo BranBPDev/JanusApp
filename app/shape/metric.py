@@ -3,6 +3,8 @@ from collections import deque
 import numpy as np
 from PIL import Image
 
+from app.shape.opening import role
+
 CELL_M = 0.05           # lo que mide SIEMPRE un cuadro de la malla (metros)
 LINE_FRACTION = 0.5     # una línea de la malla ocupa al menos la mitad del lado de la imagen
 COLOR_TOLERANCE = 60
@@ -123,6 +125,7 @@ def analyze_overlay(path, original_size, box_px, cell_m):
     x0, _, _, y1 = box_px
     to_m = lambda x, y: [round((x - x0) / cell_px * cell_m, 4), round((y1 - y) / cell_px * cell_m, 4)]
     marks = []
+    footprint = np.zeros_like(marks_mask)             # marcas violeta (contorno de los salientes)
     ys, xs = np.nonzero(marks_mask)
     if len(ys):
         bins = (arr[ys, xs, :3] // 64).astype(int)
@@ -132,6 +135,8 @@ def analyze_overlay(path, original_size, box_px, cell_m):
             if sel.sum() < 12:
                 continue
             color = arr[ys[sel], xs[sel], :3].mean(axis=0)
+            if role(_name(color)) == "saliente":
+                footprint[ys[sel], xs[sel]] = True
             comps = _components(list(zip(ys[sel].tolist(), xs[sel].tolist())))
             comps = [c for c in comps if len(c) >= 3]
             if not comps:
@@ -161,7 +166,7 @@ def analyze_overlay(path, original_size, box_px, cell_m):
             marks.append({"color": _name(color), "style": style, "components": len(comps),
                           "bbox_m": [*to_m(min(allx), max(ally)), *to_m(max(allx), min(ally))], "points_m": centers,
                           "segments_m": segments})
-    return {"cell_px": cell_px, "marks": marks, "warning": warning}
+    return {"cell_px": cell_px, "marks": marks, "warning": warning, "footprint": footprint if footprint.any() else None}
 
 
 def view_sizes_m(view, cell_px, cell_m):

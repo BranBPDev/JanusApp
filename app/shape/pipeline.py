@@ -15,6 +15,7 @@ from app.shape.model import Model, Part
 from app.shape.opening import find_opening
 from app.shape.preprocess import load_silhouette
 from app.shape.primitive import fit_primitive, is_round, primitive_mesh
+from app.shape.protrusion import build_extras, fit_core, footprints
 from app.shape.qem import decimate
 from app.shape.surface_nets import surface_nets
 
@@ -65,7 +66,7 @@ def generate_shape(view_paths: dict, grid_paths: dict, progress=None, interior_p
     images = {k: v.rgba for k, v in views.items()}
 
     # Mallas: escala exacta y marcas
-    cells, marks = {}, {}
+    cells, marks, overlays = {}, {}, {}
     for key, path in grid_paths.items():
         if key not in views:
             continue
@@ -78,6 +79,7 @@ def generate_shape(view_paths: dict, grid_paths: dict, progress=None, interior_p
             warnings.append(f"Malla {VIEW_NAMES[key]}: {found['warning'].strip()}.")
         cells[key] = found["cell_px"]
         marks[key] = found["marks"]
+        overlays[key] = found["footprint"]
 
     (mw, mh, md), metric_warnings = metric_dims(views, cells, CELL_M)
     warnings += metric_warnings
@@ -106,6 +108,12 @@ def generate_shape(view_paths: dict, grid_paths: dict, progress=None, interior_p
 
     if is_ellipsoid(primitive):
         return _ellipsoid(masks, images, dims, flips, mh, opening, iou, marks, metric, warnings, progress, t0, interior)
+
+    if primitive is None:                       # ¿cuerpo elíptico con salientes (tapa, cierre...)?
+        core = fit_core(masks, dims, flips)
+        if core is not None:
+            return _ellipsoid(masks, images, dims, flips, mh, opening, core["inliers"], marks, metric, warnings, progress,
+                              t0, interior, core, footprints(overlays, views))
 
     if primitive:
         ext = np.array([w, 1.0, d])
@@ -203,26 +211,39 @@ def _build_parts(V, F, opening, atlas, crease):
     return parts, split is not None, colors
 
 
-def _ellipsoid(masks, images, dims, flips, height_m, opening, iou, marks, metric, warnings, progress, t0, interior=None):
-    """Esfera o elipsoide: el objeto es solo una descripción paramétrica + textura (0 triángulos propios)."""
+def _ellipsoid(masks, images, dims, flips, height_m, opening, iou, marks, metric, warnings, progress, t0, interior=None,
+               core=None, fp_masks=None):
+    """Esfera o elipsoide: el cuerpo es solo una descripción paramétrica + textura. Si 'core' (cuerpo ajustado sin los
+    salientes) viene dado, lo que sobresale se genera aparte como malla y viaja con su pieza al abrirse."""
     w, _, d = dims
-    ext = np.array([w, 1.0, d])
     scale = height_m / 1.0
+    box = np.array([w, 1.0, d])
+    ext = box if core is None else 2 * core["semi"]
 
     _report(progress, 0.3, "Pintando la textura...")
-    texture = bake_equirect(images, masks, ext, flips)
+    texture = bake_equirect(images, masks, ext, flips, frames=None if core is None else core["frames"])
+    extras = None
+    if core is not None:
+        _report(progress, 0.45, "Generando los salientes...")
+        extras = build_extras(masks, images, fp_masks, tuple(box), flips, core)
+        if extras is None:
+            warnings.append("No se detectaron salientes: el objeto se genera como un elipsoide.")
     _report(progress, 0.6, "Preparando la vista previa...")
-    model, open_info = preview_model(ext, texture, opening, interior)
+    model, open_info = preview_model(ext, texture, opening, interior, None if core is None else core["center"], extras)
     if opening and open_info is None:
         warnings.append("No se pudo abrir el objeto por la línea de corte marcada (el corte no da una sola sección).")
         if interior and interior.any:
             warnings.append("Se ignoran las texturas interiores: el objeto no se pudo abrir.")
-    desc = descriptor(ext * scale, open_info, opening, scale, model.triangles)
+    extra_tris = 0 if extras is None else len(extras["F"])
+    desc = descriptor(ext * scale, open_info, opening, scale, model.triangles,
+                      None if core is None else core["center"] * scale, extra_tris)
 
     info = {"mode": "primitiva", "primitive": {"type": desc["type"]}, "primitive_iou": round(float(iou), 4),
             "openable": open_info is not None, "texture": list(model.texture.shape[:2]), "triangles": [model.triangles],
-            "size": [round(float(x), 4) for x in ext * scale], "seconds": round(time.time() - t0, 2),
+            "size": [round(float(x), 4) for x in box * scale], "seconds": round(time.time() - t0, 2),
             "metric": metric}
+    if extras is not None:
+        info["extras"] = {"triangles": extra_tris}
     _report(progress, 0.92, "Modelo generado")
     return ShapeResult(lods=[model.scaled(scale, scale)], warnings=warnings, info=info, descriptor=desc,
                        texture=texture, marks=marks)
