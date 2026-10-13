@@ -6,6 +6,7 @@ from app.shape.field import compose
 
 EXPONENTS = (0.12, 0.25, 0.45, 0.7, 1.0, 1.5)   # 1 = redondo, valores bajos = aristas vivas
 ACCEPT_IOU = 0.96
+ACCEPT_ELLIPSOID_IOU = 0.93   # esfera/elipsoide con salientes pequeños (tapas, pestillos): la forma base sigue siendo la esfera
 
 
 def _implicit(shape, axis, e1, e2, extra=0):
@@ -36,7 +37,8 @@ def fit_primitive(arrays, shape, flips):
         iou = _iou(_implicit(shape, axis, e1, e2) <= 1.0, targets)
         if iou > best_iou + 1e-9:
             best, best_iou = (axis, e1, e2), iou
-    return (best if best_iou >= ACCEPT_IOU else None), best_iou
+    round_ok = best is not None and best[1] == 1.0 and best[2] == 1.0 and best_iou >= ACCEPT_ELLIPSOID_IOU
+    return (best if best_iou >= ACCEPT_IOU or round_ok else None), best_iou
 
 
 def is_round(params) -> bool:
