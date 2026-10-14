@@ -16,9 +16,11 @@ from app.shape.surface_nets import surface_nets
 MIN_INLIERS = 0.8        # fracción mínima del contorno que debe encajar en la elipse del cuerpo
 MAX_EXTRAS = 0.25        # los salientes no pueden ser más del 25 % del volumen (si no, no es «un cuerpo con salientes»)
 AXIS_TOLERANCE = 0.08    # diferencia máxima entre las medidas de un mismo eje en distintas vistas
-RESOLUTION = 176         # rejilla de los salientes
-GAP = 1.5                # voxels que debe sobresalir algo para considerarse saliente
-EMBED = 1.5              # voxels que se hunden los salientes en el cuerpo (para que no queden despegados)
+COARSE = 96              # rejilla gruesa para localizar los salientes
+RESOLUTION = 720         # rejilla fina de cada saliente (sólo en su caja)
+SMOOTH = 3               # pasadas de suavizado
+GAP = 2.0                # voxels que debe sobresalir algo para considerarse saliente
+EMBED = 4.0              # voxels que se hunden los salientes en el cuerpo (para que no queden despegados)
 DECIMATE = 0.002        # error máximo al simplificar los salientes (fracción del alto)
 ATLAS_CAP = 512
 
@@ -148,63 +150,142 @@ def _erode(vol, n):
     return ~_dilate(~vol, n)
 
 
+def _targets(arrays, flips):
+    """Siluetas proyectadas en ejes del mundo: lista de (array 2D, eje de proyección). Misma convención que compose()."""
+    t = []
+    if "front" in arrays:
+        t.append((arrays["front"][::-1].T, 2))
+    if "back" in arrays:
+        t.append((arrays["back"][::-1, ::-1].T, 2))
+    if "right" in arrays:
+        r = arrays["right"][::-1]
+        t.append((r[:, ::-1] if flips.get("fr") else r, 0))
+    if "left" in arrays:
+        l = arrays["left"][::-1, ::-1]
+        t.append((l[:, ::-1] if flips.get("fl") else l, 0))
+    if "top" in arrays:
+        a = arrays["top"]
+        t.append(((a[::-1] if flips.get("ft") else a).T, 1))
+    if "bottom" in arrays:
+        a = arrays["bottom"]
+        t.append(((a if flips.get("fb") else a[::-1]).T, 1))
+    return t
+
+
+def _local(targets, box):
+    """Volumen (bool) de la intersección de siluetas extruidas dentro de la caja de índices (i0,i1,j0,j1,k0,k1)."""
+    i0, i1, j0, j1, k0, k1 = box
+    vol = np.ones((i1 - i0, j1 - j0, k1 - k0), bool)
+    for t, axis in targets:
+        if axis == 2:
+            vol &= (t[i0:i1, j0:j1] > 0.5)[:, :, None]
+        elif axis == 0:
+            vol &= (t[j0:j1, k0:k1] > 0.5)[None, :, :]
+        else:
+            vol &= (t[i0:i1, k0:k1] > 0.5)[:, None, :]
+    return vol
+
+
+def _components(mask, limit=12):
+    comps, rest = [], mask.copy()
+    while rest.any() and len(comps) < limit:
+        seed = np.zeros(mask.shape, bool)
+        seed[tuple(np.argwhere(rest)[0])] = True
+        for _ in range(400):
+            grown = _dilate(seed, 1) & rest
+            if (grown == seed).all():
+                break
+            seed = grown
+        comps.append(seed)
+        rest &= ~seed
+    return comps
+
+
 def build_extras(masks, images, fp_masks, dims, flips, core, progress=None):
     """Malla de lo que sobresale del cuerpo. Devuelve {'V','F','uv','texture'} o None si no hay salientes.
     V en el mismo espacio del modelo (alto = 1, apoyado en y = 0, centrado en x/z); 'uv' (n_caras,3,2) normalizadas
-    sobre 'texture' (atlas de las vistas)."""
-    shape, _ = grid_shape(dims, RESOLUTION)
-    arrays = make_arrays(masks, shape)
-    hull, _ = compose(arrays, shape, **flips)
-    hull = hull > 0.5
-    nx, ny, nz = shape
+    sobre 'texture' (atlas de las vistas). Cada saliente se vuelve a muestrear con una rejilla fina sólo en su caja."""
     lo = np.array([-dims[0] / 2, 0.0, -dims[2] / 2])
-    cell = np.array(dims, np.float64) / np.array(shape)
-    xs = lo[0] + (np.arange(nx) + 0.5) * cell[0]
-    ys = lo[1] + (np.arange(ny) + 0.5) * cell[1]
-    zs = lo[2] + (np.arange(nz) + 0.5) * cell[2]
     c, a = core["center"], core["semi"]
-    q = np.sqrt(((xs[:, None, None] - c[0]) / a[0]) ** 2 + ((ys[None, :, None] - c[1]) / a[1]) ** 2 +
-                ((zs[None, None, :] - c[2]) / a[2]) ** 2)
 
-    vox = float(cell.max())
-    out = hull & (q > 1.0 + GAP * vox / float(a.min()))
-    if fp_masks:                                    # solo lo marcado como saliente (unión de las huellas)
+    def inside_core(xs, ys, zs):
+        return np.sqrt(((xs[:, None, None] - c[0]) / a[0]) ** 2 + ((ys[None, :, None] - c[1]) / a[1]) ** 2 +
+                       ((zs[None, None, :] - c[2]) / a[2]) ** 2)
+
+    # 1) pasada gruesa: dónde hay salientes
+    shape, _ = grid_shape(dims, COARSE)
+    hull, _ = compose(make_arrays(masks, shape), shape, **flips)
+    cell = np.array(dims, np.float64) / np.array(shape)
+    axes = [lo[i] + (np.arange(shape[i]) + 0.5) * cell[i] for i in range(3)]
+    q = inside_core(*axes)
+    out = (hull > 0.5) & (q > 1.0 + GAP * float(cell.max()) / float(a.min()))
+    if fp_masks:
         arr = make_arrays(fp_masks, shape)
         union = np.zeros(shape, bool)
         for key, arr_k in arr.items():
             vol, _ = compose({key: arr_k}, shape, **flips)
             union |= vol > 0.5
         out &= union
-    out = _dilate(_erode(out, 1), 1)                # quita cáscaras de un voxel
-    n_out = int(out.sum())
-    if n_out < 30 or n_out > MAX_EXTRAS * hull.sum():
+    out = _dilate(_erode(out, 1), 1)
+    if out.sum() < 4 or out.sum() > MAX_EXTRAS * (hull > 0.5).sum():
         return None
+    comps = _components(_dilate(out, 1) & (hull > 0.5))
 
-    # los salientes se prolongan hacia dentro del cuerpo (en radial) para quedar bien unidos
-    idx = np.argwhere(out)
-    pos = np.stack([xs[idx[:, 0]], ys[idx[:, 1]], zs[idx[:, 2]]], 1)
-    grad = (pos - c) / a ** 2
-    grad /= np.maximum(np.linalg.norm(grad, axis=1, keepdims=True), 1e-12)
-    solid = out.copy()
-    steps = int(np.ceil(GAP + EMBED))
-    for s in range(1, steps + 1):
-        p = pos - grad * s * vox
-        i = np.clip(np.floor((p[:, 0] - lo[0]) / cell[0]).astype(int), 0, nx - 1)
-        j = np.clip(np.floor((p[:, 1] - lo[1]) / cell[1]).astype(int), 0, ny - 1)
-        k = np.clip(np.floor((p[:, 2] - lo[2]) / cell[2]).astype(int), 0, nz - 1)
-        solid[i, j, k] = True
-
-    pad = 2
-    V, F = surface_nets(np.pad(solid.astype(np.float32), pad))
-    if len(F) == 0:
+    # 2) pasada fina por saliente
+    fshape, _ = grid_shape(dims, RESOLUTION)
+    fcell = np.array(dims, np.float64) / np.array(fshape)
+    fine_targets = _targets(make_arrays(masks, fshape), flips)
+    fp_targets = [_targets({k: v}, flips)[0] for k, v in make_arrays(fp_masks, fshape).items()] if fp_masks else []
+    fvox = float(fcell.max())
+    meshes = []
+    for comp in comps:
+        idx = np.argwhere(comp)
+        wlo = lo + (idx.min(0) - 2) * cell
+        whi = lo + (idx.max(0) + 3) * cell
+        margin = (GAP + EMBED + 4) * fcell
+        i_lo = np.clip(np.floor((wlo - margin - lo) / fcell).astype(int), 0, np.array(fshape) - 1)
+        i_hi = np.clip(np.ceil((whi + margin - lo) / fcell).astype(int), 1, np.array(fshape))
+        box = (i_lo[0], i_hi[0], i_lo[1], i_hi[1], i_lo[2], i_hi[2])
+        lshape = tuple(i_hi - i_lo)
+        blo = lo + i_lo * fcell
+        laxes = [blo[i] + (np.arange(lshape[i]) + 0.5) * fcell[i] for i in range(3)]
+        ql = inside_core(*laxes)
+        sel = _local(fine_targets, box) & (ql > 1.0 + GAP * fvox / float(a.min()))
+        if fp_targets:
+            un = np.zeros(lshape, bool)
+            for t, axis in fp_targets:
+                un |= _local([(t, axis)], box)
+            sel &= un
+        sel = _dilate(_erode(sel, 1), 1)
+        if sel.sum() < 200:
+            continue
+        idx = np.argwhere(sel)
+        pos = np.stack([laxes[0][idx[:, 0]], laxes[1][idx[:, 1]], laxes[2][idx[:, 2]]], 1)
+        grad = (pos - c) / a ** 2
+        grad /= np.maximum(np.linalg.norm(grad, axis=1, keepdims=True), 1e-12)
+        solid = sel.copy()
+        for s in range(1, int(np.ceil(GAP + EMBED)) + 1):
+            p = pos - grad * s * fvox
+            i = np.clip(np.floor((p[:, 0] - blo[0]) / fcell[0]).astype(int), 0, lshape[0] - 1)
+            j = np.clip(np.floor((p[:, 1] - blo[1]) / fcell[1]).astype(int), 0, lshape[1] - 1)
+            k = np.clip(np.floor((p[:, 2] - blo[2]) / fcell[2]).astype(int), 0, lshape[2] - 1)
+            solid[i, j, k] = True
+        pad = 2
+        V, F = surface_nets(np.pad(solid.astype(np.float32), pad))
+        if len(F) == 0:
+            continue
+        V, F = remove_small_components(V, F)
+        V = (V - pad + 0.5) * fcell + blo
+        V = taubin_smooth(V, F, SMOOTH)
+        V, F = decimate(V, F, DECIMATE, 12)
+        meshes.append((V, F))
+    if not meshes:
         return None
-    V, F = remove_small_components(V, F)
-    V = (V - pad + 0.5) * cell + lo
-    V = taubin_smooth(V, F, 4)
-    V, F = decimate(V, F, DECIMATE, 12)
+    V = np.concatenate([m[0] for m in meshes])
+    offs = np.cumsum([0] + [len(m[0]) for m in meshes])
+    F = np.concatenate([m[1] + o for m, o in zip(meshes, offs)])
 
-    box_lo = lo
-    atlas = Atlas(images, masks, (box_lo, box_lo + np.array(dims, np.float64)), flips, cap=ATLAS_CAP)
+    atlas = Atlas(images, masks, (lo, lo + np.array(dims, np.float64)), flips, cap=ATLAS_CAP)
     uv = atlas.corner_uvs(V, F, np.zeros(len(F), int), (0.0, 0.0))
     return {"V": V.astype(np.float64), "F": F.astype(np.int32), "uv": uv, "texture": atlas.texture}
 

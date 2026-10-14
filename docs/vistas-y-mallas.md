@@ -45,7 +45,7 @@ Todo lo que se dibuje sobre la malla en un color distinto al de la cuadrícula e
 |---|---|---|---|
 | 🔴 Rojo | **Línea de corte** (por aquí se abre) | Lateral (cualquier inclinación) o frente/detrás (horizontal) | Para que se abra |
 | 🟢 Verde | **Punto** en la parte que se mueve | Derecha, izquierda, frente o detrás | No (por defecto, la de arriba) |
-| 🔵 Azul | **Punto** en la bisagra | Lateral | No (por defecto, el borde trasero del corte) |
+| 🔵 Azul | **Punto** en la bisagra, sobre el borde trasero de la esfera (donde se unen tapa y base) | Lateral | No (por defecto, el borde trasero del corte) |
 | 🟡 Amarillo | **Círculo del botón**: queda **entero en la tapa** y deja su hueco en la base | Frente | No |
 | 🟣 Violeta | **Contorno de un saliente** (tapa, cierre…) visto de frente | Vista que lo ve de cara | No |
 
