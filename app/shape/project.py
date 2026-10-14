@@ -11,6 +11,7 @@ from PIL import Image
 from app.shape.export import read_obj, texture_png, write_glb, write_obj
 from app.shape.naming import IMAGE_SUFFIXES
 from app.shape.pipeline import ShapeResult
+from app.shape.skeleton import Skeleton, attach_skeleton
 from app.utils.json_util import read_json, save_json
 from app.utils.paths_util import PROJECTS_DIR
 
@@ -84,8 +85,10 @@ def save_shape(name: str, view_paths: dict, grid_paths: dict, result: ShapeResul
         "grids": saved["grids"],
         "interiors": saved["interiors"],
         "annotations": result.marks,
-        "shape": {"parts": parts, "lods": lods, "primitive_object": result.descriptor, **result.info},
-        "phases": {p: bool(phases.get(p, False)) for p in PHASES} | {"shape": True, "texture": lod0.texture is not None},
+        "shape": {"parts": parts, "lods": lods, "primitive_object": result.descriptor, **result.info,
+                  "skeleton": None if lod0.skeleton is None else lod0.skeleton.to_dict()},
+        "phases": {p: bool(phases.get(p, False)) for p in PHASES} | {"shape": True, "texture": lod0.texture is not None,
+                                                                      "rig": lod0.skeleton is not None},
     })
     save_json(root / MANIFEST, manifest)
     return root
@@ -140,6 +143,9 @@ def load_model(root: Path):
                 part.parent, part.origin = extra.get("parent"), tuple(extra.get("origin", (0.0, 0.0, 0.0)))
                 part.axis = tuple(extra["axis"]) if extra.get("axis") else None
                 part.open_angle = extra.get("open_angle_deg", 0.0)
+        skeleton = _read_manifest(root).get("shape", {}).get("skeleton")
+        if skeleton:
+            attach_skeleton(model, Skeleton.from_dict(skeleton))
         return model
     except Exception:
         return None

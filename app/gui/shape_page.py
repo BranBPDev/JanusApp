@@ -100,6 +100,20 @@ class ShapePage(QWidget):
         self.open_row.hide()
         right.addWidget(self.open_row)
 
+        self.rig_row = QWidget()        # esqueleto (solo si el objeto lo tiene)
+        rrow = QHBoxLayout(self.rig_row)
+        rrow.setContentsMargins(0, 0, 0, 0)
+        rrow.addWidget(QLabel("Esqueleto"))
+        self.animate_box = QCheckBox("Mover")
+        self.animate_box.toggled.connect(self.viewer.set_animate)
+        rrow.addWidget(self.animate_box)
+        self.bones_box = QCheckBox("Ver huesos")
+        self.bones_box.toggled.connect(self.viewer.set_bones)
+        rrow.addWidget(self.bones_box)
+        rrow.addStretch()
+        self.rig_row.hide()
+        right.addWidget(self.rig_row)
+
         bar = QHBoxLayout()
         self.lod_group = QButtonGroup(self)
         self.lod_buttons = []
@@ -144,6 +158,8 @@ class ShapePage(QWidget):
         self.result, self.project_root = None, None
         self.viewer.set_model(None)
         self.open_row.hide()
+        self.rig_row.hide()
+        self.animate_box.setChecked(False)
         self.open_slider.setValue(0)
         self.open_btn.setEnabled(False)
         self.info.clear()
@@ -229,6 +245,7 @@ class ShapePage(QWidget):
         self.lod_buttons[0].setChecked(True)
         self.open_slider.setValue(0)
         self.open_row.setVisible(result.lods[0].openable)
+        self.rig_row.setVisible(result.lods[0].rigged)
         self._show_lod(0)
         if result.warnings:
             self.warn.setText("\n".join(result.warnings))
@@ -240,7 +257,7 @@ class ShapePage(QWidget):
         self.viewer.set_model(model)
         self.viewer.set_open(self.open_slider.value() / 100)
         w, h, d = model.size
-        opens = " · se abre" if model.openable else ""
+        opens = (" · se abre" if model.openable else "") + (f" · esqueleto de {len(model.skeleton)} huesos" if model.rigged else "")
         if self.result.descriptor:
             kind = "Esfera" if self.result.descriptor["type"] == "sphere" else "Elipsoide"
             tex_in = self.result.descriptor.get("opening", {}) or {}

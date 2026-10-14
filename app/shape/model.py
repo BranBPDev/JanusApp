@@ -16,12 +16,15 @@ class Part:
     origin: tuple = (0.0, 0.0, 0.0)    # pivote del nodo (bisagra, centro del botón...)
     axis: Optional[tuple] = None       # eje de giro de la apertura (regla de la mano derecha)
     open_angle: float = 0.0            # grados al abrir del todo
+    joints: Optional[np.ndarray] = None    # (n,4) uint8: huesos que mueven cada vértice (si el modelo tiene esqueleto)
+    weights: Optional[np.ndarray] = None   # (n,4) float32: peso de cada hueso (suman 1)
 
 
 @dataclass
 class Model:
     parts: list
     texture: Optional[np.ndarray] = None   # (h,w,4) uint8
+    skeleton: Optional[object] = None      # Skeleton (app.shape.skeleton) en el mismo espacio que los vértices
 
     @property
     def triangles(self) -> int:
@@ -30,6 +33,10 @@ class Model:
     @property
     def vertex_count(self) -> int:
         return sum(len(p.vertices) for p in self.parts)
+
+    @property
+    def rigged(self) -> bool:
+        return self.skeleton is not None
 
     @property
     def openable(self) -> bool:
@@ -47,5 +54,5 @@ class Model:
             n = p.normals.astype(np.float64) / s
             n /= np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-12)
             parts.append(Part(p.name, (p.vertices * s).astype(np.float32), p.faces, n.astype(np.float32), p.uvs,
-                              p.parent, tuple((np.array(p.origin) * s).tolist()), p.axis, p.open_angle))
-        return Model(parts, self.texture)
+                              p.parent, tuple((np.array(p.origin) * s).tolist()), p.axis, p.open_angle, p.joints, p.weights))
+        return Model(parts, self.texture, None if self.skeleton is None else self.skeleton.scaled(float(sxz)))

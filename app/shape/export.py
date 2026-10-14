@@ -7,6 +7,7 @@ import numpy as np
 from PIL import Image
 
 from app.shape.model import Model, Part
+from app.shape.skeleton import swing_pose
 
 
 def texture_png(texture: np.ndarray) -> bytes:
@@ -69,8 +70,19 @@ def _pad(data: bytes, byte: bytes = b"\x00") -> bytes:
     return data + byte * (-len(data) % 4)
 
 
-def write_glb(path, model, name="objeto"):
-    """glTF 2.0 binario: una malla por pieza, jerarquía de nodos con pivotes y una sola textura/material."""
+ANIMATION = {"name": "demo_movimiento", "seconds": 2.0, "frames": 24}
+
+
+def _quaternion(axis, angle):
+    a = np.asarray(axis, np.float64)
+    a = a / max(np.linalg.norm(a), 1e-12)
+    return [*(a * np.sin(angle / 2)).tolist(), float(np.cos(angle / 2))]
+
+
+def write_glb(path, model, name="objeto", animation=True):
+    """glTF 2.0 binario: una malla por pieza, jerarquía de nodos con pivotes y una sola textura/material.
+    Si el modelo tiene esqueleto: un nodo por hueso, 'skin' con sus matrices inversas, JOINTS_0/WEIGHTS_0 en las piezas
+    (con los vértices en reposo, sin pivote) y, si 'animation', un movimiento de prueba genérico."""
     buf = bytearray()
     views, accessors, meshes, nodes = [], [], [], [{"name": name, "children": []}]
 
@@ -85,11 +97,27 @@ def write_glb(path, model, name="objeto"):
 
     origins = {p.name: np.array(p.origin) for p in model.parts}
     node_of = {}
+    sk = model.skeleton
+    joint_node = []
+    if sk is not None:                          # huesos: nodos con la posición local respecto al padre
+        for i, bone in enumerate(sk.names):
+            parent = sk.parents[i]
+            t = (sk.rest[i] - (sk.rest[parent] if parent >= 0 else 0.0))
+            nodes.append({"name": bone, "translation": [float(v) for v in t]})
+            joint_node.append(len(nodes) - 1)
+        for i, parent in enumerate(sk.parents):
+            host = nodes[0] if parent < 0 else nodes[joint_node[parent]]
+            host.setdefault("children", []).append(joint_node[i])
+    skinned = sk is not None
     for p in model.parts:
-        local = (p.vertices - np.array(p.origin, np.float32)).astype("<f4")
+        rigged = skinned and p.joints is not None
+        local = (p.vertices if rigged else p.vertices - np.array(p.origin, np.float32)).astype("<f4")
         attrs = {"POSITION": add_acc(local.tobytes(), 34962, 5126, len(local), "VEC3",
                                      min=local.min(axis=0).tolist(), max=local.max(axis=0).tolist()),
                  "NORMAL": add_acc(np.ascontiguousarray(p.normals, "<f4").tobytes(), 34962, 5126, len(local), "VEC3")}
+        if rigged:
+            attrs["JOINTS_0"] = add_acc(np.ascontiguousarray(p.joints, "u1").tobytes(), 34962, 5121, len(local), "VEC4")
+            attrs["WEIGHTS_0"] = add_acc(np.ascontiguousarray(p.weights, "<f4").tobytes(), 34962, 5126, len(local), "VEC4")
         if p.uvs is not None:
             attrs["TEXCOORD_0"] = add_acc(np.ascontiguousarray(p.uvs, "<f4").tobytes(), 34962, 5126, len(local), "VEC2")
         small = len(local) < 65536
@@ -101,16 +129,20 @@ def write_glb(path, model, name="objeto"):
         meshes.append({"name": p.name, "primitives": [prim]})
 
         node = {"name": p.name, "mesh": len(meshes) - 1}
-        parent_origin = origins[p.parent] if p.parent else np.zeros(3)
-        t = (origins[p.name] - parent_origin).tolist()
-        if any(abs(c) > 1e-9 for c in t):
-            node["translation"] = t
+        if rigged:
+            node["skin"] = 0
+        else:
+            parent_origin = origins[p.parent] if p.parent else np.zeros(3)
+            t = (origins[p.name] - parent_origin).tolist()
+            if any(abs(c) > 1e-9 for c in t):
+                node["translation"] = t
         if p.axis is not None:
             node["extras"] = {"janus": {"axis": list(p.axis), "open_angle_deg": p.open_angle}}
         nodes.append(node)
         node_of[p.name] = len(nodes) - 1
     for p in model.parts:
-        parent = nodes[node_of[p.parent]] if p.parent else nodes[0]
+        rigged = skinned and p.joints is not None
+        parent = nodes[node_of[p.parent]] if p.parent and not rigged else nodes[0]
         parent.setdefault("children", []).append(node_of[p.name])
 
     meta = {
@@ -118,6 +150,30 @@ def write_glb(path, model, name="objeto"):
         "scene": 0, "scenes": [{"nodes": [0]}], "nodes": nodes, "meshes": meshes,
         "accessors": accessors,
     }
+    if skinned:
+        ibm = np.tile(np.eye(4, dtype="<f4"), (len(sk), 1, 1))
+        ibm[:, 3, :3] = -np.asarray(sk.rest, np.float32)        # glTF guarda las matrices por columnas
+        skin = {"joints": joint_node, "skeleton": joint_node[0],
+                "inverseBindMatrices": add_acc(ibm.astype("<f4").tobytes(), None, 5126, len(sk), "MAT4")}
+        meta["skins"] = [skin]
+        if animation:
+            n = ANIMATION["frames"]
+            phases = np.arange(n + 1) / n * 2 * np.pi
+            times = (np.arange(n + 1) / n * ANIMATION["seconds"]).astype("<f4")
+            t_acc = add_acc(times.tobytes(), None, 5126, n + 1, "SCALAR", min=[0.0], max=[float(times[-1])])
+            samplers, channels = [], []
+            tracks = [swing_pose(sk, ph) for ph in phases]
+            for i in range(1, len(sk)):
+                axis = tracks[0][0][i]
+                angles = [tr[1][i] for tr in tracks]
+                if max(abs(a) for a in angles) < 1e-6:
+                    continue
+                quats = np.array([_quaternion(axis, a) for a in angles], "<f4")
+                samplers.append({"input": t_acc, "output": add_acc(quats.tobytes(), None, 5126, n + 1, "VEC4"),
+                                 "interpolation": "LINEAR"})
+                channels.append({"sampler": len(samplers) - 1, "target": {"node": joint_node[i], "path": "rotation"}})
+            if channels:
+                meta["animations"] = [{"name": ANIMATION["name"], "samplers": samplers, "channels": channels}]
     if model.texture is not None:
         image_view = add_view(texture_png(model.texture))
         meta.update({

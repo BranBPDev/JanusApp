@@ -1,5 +1,5 @@
 import numpy as np
-from PySide6.QtCore import QPointF, QRect, Qt
+from PySide6.QtCore import QPointF, QRect, Qt, QTimer
 from PySide6.QtGui import QBrush, QColor, QImage, QPainter, QPen, QPixmap, QPolygonF, QTransform
 from PySide6.QtWidgets import QWidget
 
@@ -16,9 +16,21 @@ def texture_brush(model):
     return QBrush(QImage(data.data, data.shape[1], data.shape[0], data.shape[1] * 4, QImage.Format_RGBA8888).copy())
 
 
-def draw_scene(p, scene, brush, yaw, pitch, zoom, open_t, width, height, wireframe=False):
+def draw_bones(p, scene, yaw, pitch, zoom, open_t, width, height, pose=None):
+    """Huesos (líneas) y articulaciones (puntos) encima del modelo."""
+    lines, points = scene.joint_lines(yaw, pitch, zoom, open_t, width, height, pose)
+    p.setPen(QPen(QColor(255, 196, 0), 2.0))
+    for a, b in lines:
+        p.drawLine(QPointF(*a), QPointF(*b))
+    p.setPen(QPen(QColor(20, 20, 30), 1.0))
+    p.setBrush(QColor(255, 255, 255))
+    for x, y in points:
+        p.drawEllipse(QPointF(x, y), 3.5, 3.5)
+
+
+def draw_scene(p, scene, brush, yaw, pitch, zoom, open_t, width, height, wireframe=False, pose=None):
     """Dibuja un Scene con el pintor dado (lo usan el visor y las miniaturas)."""
-    d = scene.draw_list(yaw, pitch, zoom, open_t, width, height)
+    d = scene.draw_list(yaw, pitch, zoom, open_t, width, height, pose)
     polys, flat, shade, textured, coef = d["polys"], d["flat"], d["shade"], d["textured"], d["coef"]
     p.setPen(QPen(QColor(10, 12, 20, 200), 0.8) if wireframe else Qt.NoPen)
     for i in range(len(polys)):
@@ -62,6 +74,12 @@ class MeshViewer(QWidget):
         self.setMinimumSize(420, 320)
         self.wireframe = False
         self.open_t = 0.0
+        self.animate = False       # movimiento de prueba del esqueleto
+        self.bones = False         # dibuja los huesos encima
+        self._phase = 0.0
+        self._timer = QTimer(self)
+        self._timer.setInterval(33)
+        self._timer.timeout.connect(self._tick)
         self._scene = None
         self._brush = None
         self._last = None
@@ -81,6 +99,25 @@ class MeshViewer(QWidget):
         self.open_t = t
         self.update()
 
+    def set_animate(self, on: bool):
+        self.animate = on
+        if on:
+            self._timer.start()
+        else:
+            self._timer.stop()
+        self.update()
+
+    def set_bones(self, on: bool):
+        self.bones = on
+        self.update()
+
+    def _tick(self):
+        self._phase += 0.12
+        self.update()
+
+    def _pose(self):
+        return self._scene.pose(self._phase) if self.animate and self._scene is not None else None
+
     def set_wireframe(self, on: bool):
         self.wireframe = on
         self.update()
@@ -95,8 +132,11 @@ class MeshViewer(QWidget):
             p.drawText(self.rect(), Qt.AlignCenter, "El modelo aparecerá aquí")
             return
 
+        pose = self._pose()
         draw_scene(p, self._scene, self._brush, self.yaw, self.pitch, self.zoom, self.open_t, self.width(), self.height(),
-                   self.wireframe)
+                   self.wireframe, pose)
+        if self.bones:
+            draw_bones(p, self._scene, self.yaw, self.pitch, self.zoom, self.open_t, self.width(), self.height(), pose)
         p.setPen(QColor(COLORS["muted"]))
         p.drawText(12, self.height() - 12, "Arrastra para rotar · rueda para zoom · doble clic para restablecer")
 

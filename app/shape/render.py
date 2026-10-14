@@ -2,6 +2,8 @@ import math
 
 import numpy as np
 
+from app.shape.skeleton import pose_frames, skin_vertices, swing_rotations
+
 _LIGHT = np.array([-0.4, 0.6, 0.7]) / np.linalg.norm([-0.4, 0.6, 0.7])
 _DEFAULT = np.array([170.0, 178.0, 214.0])
 
@@ -61,11 +63,32 @@ class Scene:
             colors.append(tex[y, x, :3].astype(np.float64))
         return np.concatenate(colors)
 
-    def posed(self, t: float):
-        """Vértices y normales con la apertura t (0 = cerrado, 1 = abierto)."""
+    def pose(self, phase: float):
+        """Pose de prueba del esqueleto (movimiento genérico) para la fase dada, o None si el modelo no tiene esqueleto."""
+        sk = self.model.skeleton
+        return None if sk is None else pose_frames(sk, swing_rotations(sk, phase))
+
+    def joint_lines(self, yaw, pitch, zoom, t, width, height, pose=None):
+        """Segmentos (padre -> hijo) de los huesos en pantalla, (k,2,2), y los puntos de las articulaciones (n,2)."""
+        sk = self.model.skeleton
+        if sk is None:
+            return np.zeros((0, 2, 2)), np.zeros((0, 2))
+        pts = (pose_frames(sk)[1] if pose is None else pose[1]) - self.center
+        cy, sy, cp, sp = math.cos(yaw), math.sin(yaw), math.cos(pitch), math.sin(pitch)
+        rot = np.array([[1, 0, 0], [0, cp, -sp], [0, sp, cp]]) @ np.array([[cy, 0, sy], [0, 1, 0], [-sy, 0, cy]])
+        vr = pts @ rot.T
+        scale = min(width, height) * 0.42 / self.radius * zoom
+        scr = np.stack([width / 2 + vr[:, 0] * scale, height / 2 - vr[:, 1] * scale], axis=1)
+        links = [(p, i) for i, p in enumerate(sk.parents) if p >= 0]
+        return (np.array([[scr[p], scr[i]] for p, i in links]) if links else np.zeros((0, 2, 2))), scr
+
+    def posed(self, t: float, pose=None):
+        """Vértices y normales con la apertura t (0 = cerrado, 1 = abierto) y, si se da, la pose del esqueleto."""
         verts, norms = [], []
         for p in self.parts:
             V, N = p.vertices.astype(np.float64), p.normals.astype(np.float64)
+            if pose is not None and p.joints is not None:
+                V, N = skin_vertices(V, N, p.joints, p.weights.astype(np.float64), self.model.skeleton, pose)
             node = p
             while node is not None:
                 if node.axis is not None and t > 0:
@@ -77,8 +100,8 @@ class Scene:
             norms.append(N)
         return np.concatenate(verts), np.concatenate(norms)
 
-    def draw_list(self, yaw, pitch, zoom, t, width, height):
-        V, N = self.posed(t)
+    def draw_list(self, yaw, pitch, zoom, t, width, height, pose=None):
+        V, N = self.posed(t, pose)
         V = V - self.center
         cy, sy, cp, sp = math.cos(yaw), math.sin(yaw), math.cos(pitch), math.sin(pitch)
         rot = np.array([[1, 0, 0], [0, cp, -sp], [0, sp, cp]]) @ np.array([[cy, 0, sy], [0, 1, 0], [-sy, 0, cy]])
