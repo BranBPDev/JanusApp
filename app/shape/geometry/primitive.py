@@ -2,7 +2,7 @@ import itertools
 
 import numpy as np
 
-from app.shape.field import compose
+from app.shape.geometry.field import compose
 
 EXPONENTS = (0.12, 0.25, 0.45, 0.7, 1.0, 1.5)   # 1 = redondo, valores bajos = aristas vivas
 ACCEPT_IOU = 0.96

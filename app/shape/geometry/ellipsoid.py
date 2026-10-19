@@ -1,11 +1,11 @@
 import numpy as np
 
-from app.shape.atlas import CHARTS, NEUTRAL, extend_colors
-from app.shape.cut import WALL, split_openable
-from app.shape.mesh_ops import build_attributes, crease_normals
+from app.shape.geometry.cut import WALL, split_openable
+from app.shape.geometry.mesh_ops import build_attributes, crease_normals
+from app.shape.geometry.primitive import primitive_mesh
+from app.shape.geometry.protrusion import assign_sides
 from app.shape.model import Model, Part
-from app.shape.primitive import primitive_mesh
-from app.shape.protrusion import assign_sides
+from app.shape.texture.atlas import CHARTS, NEUTRAL, extend_colors
 
 TEX_WIDTH = 512
 STRIP = 8          # filas extra con los colores planos del interior (si no hay texturas interiores)

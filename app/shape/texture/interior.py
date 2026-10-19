@@ -1,16 +1,12 @@
-from pathlib import Path
-
 import numpy as np
 from PIL import Image
 
-from app.shape.naming import INTERIOR_KEYS
-
-NAMES = INTERIOR_KEYS   # tapa (pieza móvil) y base (pieza fija)
+NAMES = ("movable", "fixed")   # tapa (pieza móvil) y base (pieza fija)
 MAX_CELL = 512
 
 
 class Interior:
-    """Texturas interiores opcionales (una por pieza). Sin imagen, el interior sigue siendo de color plano.
+    """Texturas interiores opcionales (una por pieza, RGBA uint8 que salen del JSON). Sin imagen, el interior sigue siendo de color plano.
 
     Cada imagen se proyecta en plano sobre el interior de su pieza, mirando hacia el corte: eje horizontal = X del
     objeto, eje vertical = profundidad (el frente queda abajo, como en la vista 'arriba'). La imagen se estira al
@@ -20,15 +16,6 @@ class Interior:
         self.images = {n: (images or {}).get(n) for n in NAMES}
         self.cells = {}        # nombre -> (x0, y0, lado) en píxeles de la textura final
         self.size = None       # (ancho, alto) de la textura final
-
-    @classmethod
-    def load(cls, paths: dict = None):
-        images = {}
-        for name in NAMES:
-            p = (paths or {}).get(name)
-            if p:
-                images[name] = np.asarray(Image.open(Path(p)).convert("RGBA"), np.uint8)
-        return cls(images)
 
     def has(self, name: str) -> bool:
         return self.images.get(name) is not None

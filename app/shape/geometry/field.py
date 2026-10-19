@@ -11,17 +11,6 @@ from PIL import Image
 #   abajo: el frente del objeto está en la parte superior de la imagen
 
 
-def compute_dims(masks: dict):
-    """Proporciones (ancho, alto=1, fondo) a partir de las vistas."""
-    def ratio(keys):
-        vals = [masks[k].shape[1] / masks[k].shape[0] for k in keys if k in masks]
-        return sum(vals) / len(vals) if vals else None
-
-    w = ratio(("front", "back"))
-    d = ratio(("left", "right"))
-    return w, 1.0, d
-
-
 def grid_shape(dims, resolution: int):
     cell = max(dims) / resolution
     return tuple(max(4, round(x / cell)) for x in dims), cell

@@ -1,31 +1,27 @@
 """Objetos redondos con salientes (tapas, pestillos, asas...): núcleo elíptico + malla de los salientes.
 
 El contorno de las vistas da el cuerpo (un elipsoide ajustado ignorando los salientes) y lo que sobresale de él es el
-casco visual menos ese cuerpo. Las marcas violeta de las mallas (huella del saliente vista de frente) indican qué partes
+casco visual menos ese cuerpo. Las huellas de salientes del JSON (forma del saliente en una vista) indican qué partes
 sobresalen y con qué forma en planta, de modo que el resultado no se rompe en bloques."""
 import numpy as np
-from PIL import Image
 
-from app.shape.atlas import Atlas
-from app.shape.field import compose, grid_shape, make_arrays
-from app.shape.mesh_ops import remove_small_components, taubin_smooth
-from app.shape.preprocess import fill_holes
-from app.shape.qem import decimate
-from app.shape.surface_nets import surface_nets
+from app.shape.geometry.coords import VIEW_AXES
+from app.shape.geometry.field import compose, grid_shape, make_arrays
+from app.shape.geometry.mesh_ops import remove_small_components, taubin_smooth
+from app.shape.geometry.qem import decimate
+from app.shape.geometry.surface_nets import surface_nets
+from app.shape.texture.atlas import Atlas
 
 MIN_INLIERS = 0.8        # fracción mínima del contorno que debe encajar en la elipse del cuerpo
 MAX_EXTRAS = 0.25        # los salientes no pueden ser más del 25 % del volumen (si no, no es «un cuerpo con salientes»)
 AXIS_TOLERANCE = 0.08    # diferencia máxima entre las medidas de un mismo eje en distintas vistas
 COARSE = 96              # rejilla gruesa para localizar los salientes
-RESOLUTION = 720         # rejilla fina de cada saliente (sólo en su caja)
+RESOLUTION = 360         # rejilla fina de cada saliente (sólo en su caja)
 SMOOTH = 3               # pasadas de suavizado
 GAP = 2.0                # voxels que debe sobresalir algo para considerarse saliente
 EMBED = 4.0              # voxels que se hunden los salientes en el cuerpo (para que no queden despegados)
 DECIMATE = 0.002        # error máximo al simplificar los salientes (fracción del alto)
 ATLAS_CAP = 512
-
-# (eje horizontal, eje vertical) de cada vista en el mundo: 0 = x, 1 = y, 2 = z
-_AXES = {"front": (0, 1), "back": (0, 1), "left": (2, 1), "right": (2, 1), "top": (0, 2), "bottom": (0, 2)}
 
 
 def _boundary(mask):
@@ -85,7 +81,7 @@ def fit_core(masks: dict, dims, flips: dict):
         h, w = mask.shape
         inliers.append(frac)
         frames[key] = (cx / w, cy / h, rx / w, ry / h)
-        ah, av = _AXES[key]
+        ah, av = VIEW_AXES[key]
         fh, fv = ext[ah] / w, ext[av] / h
         est[ah].append(rx * fh)
         est[av].append(ry * fv)
@@ -117,23 +113,6 @@ def fit_core(masks: dict, dims, flips: dict):
     lo = np.array([-dims[0] / 2, 0.0, -dims[2] / 2])
     center = np.array([float(np.mean(cen[a])) for a in range(3)]) + lo
     return {"center": center, "semi": np.array(semi), "frames": frames, "inliers": float(np.mean(inliers))}
-
-
-def footprints(overlays: dict, views: dict) -> dict:
-    """Huellas de los salientes: máscaras (recortadas y reescaladas a la silueta de cada vista) de las marcas violeta,
-    con el interior relleno."""
-    out = {}
-    for key, raw in overlays.items():
-        if raw is None or key not in views or not raw.any():
-            continue
-        v = views[key]
-        x0, y0, x1, y1 = [int(round(c * v.scale)) for c in v.box]
-        crop = raw[y0:y1, x0:x1]
-        if not crop.any():
-            continue
-        img = Image.fromarray(crop.astype(np.uint8) * 255, "L").resize((v.mask.shape[1], v.mask.shape[0]), Image.NEAREST)
-        out[key] = fill_holes(np.asarray(img) > 127)
-    return out
 
 
 def _dilate(vol, n):

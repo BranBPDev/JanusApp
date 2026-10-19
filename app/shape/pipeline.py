@@ -3,22 +3,21 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from app.shape.atlas import Atlas
-from app.shape.cut import split_openable
-from app.shape.ellipsoid import bake_equirect, descriptor, is_ellipsoid, preview_model
-from app.shape.interior import Interior
-from app.shape.field import compose, compute_dims, detect_orientation, grid_shape, make_arrays
-from app.shape.naming import VIEW_NAMES
-from app.shape.mesh_ops import build_attributes, crease_normals, is_watertight, remove_small_components, taubin_smooth
-from app.shape.metric import CELL_M, analyze_overlay, metric_dims
+from app.shape.geometry.cut import split_openable
+from app.shape.geometry.ellipsoid import bake_equirect, descriptor, is_ellipsoid, preview_model
+from app.shape.geometry.field import compose, detect_orientation, grid_shape, make_arrays
+from app.shape.geometry.mesh_ops import build_attributes, crease_normals, is_watertight, remove_small_components, taubin_smooth
+from app.shape.geometry.opening import find_opening
+from app.shape.geometry.primitive import fit_primitive, is_round, primitive_mesh
+from app.shape.geometry.protrusion import build_extras, fit_core
+from app.shape.geometry.qem import decimate
+from app.shape.geometry.surface_nets import surface_nets
 from app.shape.model import Model, Part
-from app.shape.opening import find_opening
-from app.shape.preprocess import load_silhouette
-from app.shape.primitive import fit_primitive, is_round, primitive_mesh
-from app.shape.protrusion import build_extras, fit_core, footprints
-from app.shape.qem import decimate
-from app.shape.skeleton import analyze_joints, attach_skeleton, build_skeleton, depth_finder, refine_mesh
-from app.shape.surface_nets import surface_nets
+from app.shape.rig.skeleton import attach_skeleton, build_skeleton, depth_finder, refine_mesh
+from app.shape.spec.blueprint import Blueprint
+from app.shape.texture.atlas import Atlas
+from app.shape.texture.interior import Interior
+from app.utils.callback_util import invoke_progress
 
 LOD_TOLERANCE = (0.02, 0.04, 0.08, 0.15)   # error medio admitido por nivel (fracción del tamaño del objeto)
 PRIMITIVE_GRID_ROUND = ((12, 6), (8, 4), (6, 2), (4, 2))   # (lados, anillos) por nivel
@@ -37,78 +36,36 @@ class ShapeResult:
     info: dict = field(default_factory=dict)
     descriptor: dict = None   # objeto paramétrico (esfera/elipsoide): no se guarda ninguna malla
     texture: object = None    # textura que acompaña al descriptor
-    marks: dict = field(default_factory=dict)   # marcas de las mallas por vista
+    marks: dict = field(default_factory=dict)   # marcas del JSON por vista
 
 
-def _report(cb, frac, msg):
-    if cb:
-        cb(frac, msg)
-
-
-def generate_shape(view_paths: dict, grid_paths: dict, progress=None, interior_paths: dict = None) -> ShapeResult:
-    """Genera el objeto a partir de las vistas y sus mallas. Todo (tamaño, forma, apertura) sale de ellas.
-    'interior_paths' ({'movable': ruta, 'fixed': ruta}) son las texturas interiores opcionales de la tapa y la base."""
+def generate_shape(bp: Blueprint, progress=None) -> ShapeResult:
+    """Genera el objeto a partir del Blueprint (el JSON ya interpretado): tamaño, forma, apertura y esqueleto salen de él."""
     t0 = time.time()
-    warnings = []
-    interior = Interior.load(interior_paths)
-
-    given = {k: p for k, p in view_paths.items() if p}
-    if "front" not in given or not ({"left", "right"} & set(given)):
-        raise ValueError("Se necesitan al menos la vista frontal y una vista lateral.")
-    missing = [VIEW_NAMES[k] for k in given if not (grid_paths or {}).get(k)]
-    if missing:
-        raise ValueError("Falta la malla de: " + ", ".join(missing) + ".")
-
-    views = {}
-    for i, (key, path) in enumerate(given.items()):
-        _report(progress, 0.06 * i / len(given), f"Leyendo vista {VIEW_NAMES[key]}...")
-        views[key] = load_silhouette(path)
-        if views[key].warning:
-            warnings.append(f"Vista {VIEW_NAMES[key]}: {views[key].warning}.")
-    masks = {k: v.mask for k, v in views.items()}
-    images = {k: v.rgba for k, v in views.items()}
-
-    # Mallas: escala exacta y marcas
-    cells, marks, overlays, joint_marks = {}, {}, {}, {}
-    for key, path in grid_paths.items():
-        if key not in views:
-            continue
-        v = views[key]
-        x0, y0, x1, y1 = v.box
-        found = analyze_overlay(path, v.original_size, (x0 * v.scale, y0 * v.scale, x1 * v.scale, y1 * v.scale), CELL_M)
-        if found is None:
-            raise ValueError(f"No se detecta una cuadrícula regular en la malla {VIEW_NAMES[key]}.")
-        if found["warning"]:
-            warnings.append(f"Malla {VIEW_NAMES[key]}: {found['warning'].strip()}.")
-        cells[key] = found["cell_px"]
-        marks[key] = found["marks"]
-        overlays[key] = found["footprint"]
-        joint_marks[key] = analyze_joints(path, v.original_size, (x0 * v.scale, y0 * v.scale, x1 * v.scale, y1 * v.scale),
-                                          found["cell_px"], CELL_M)
-
-    (mw, mh, md), metric_warnings = metric_dims(views, cells, CELL_M)
-    warnings += metric_warnings
+    warnings = list(bp.warnings)
+    interior = Interior(bp.interiors)
+    masks = {k: v.mask for k, v in bp.views.items()}
+    images = {k: v.rgba for k, v in bp.views.items()}
+    mw, mh, md = bp.dims_m
     dims = (mw / mh, 1.0, md / mh)
-    metric = {"cell_m": CELL_M, "height_m": mh, "width_m": mw, "depth_m": md}
+    metric = {"height_m": mh, "width_m": mw, "depth_m": md}
     w, _, d = dims
-    for key in ("top", "bottom"):
-        if key in masks and abs(masks[key].shape[1] / masks[key].shape[0] / (w / d) - 1) > 0.18:
-            warnings.append(f"La vista {VIEW_NAMES[key]} no concuerda con las proporciones de las demás vistas.")
+    marks, overlays = bp.marks, bp.marks.footprints
 
-    # Apertura (marcas de las mallas)
+    # Apertura (marcas del JSON)
     opening, open_warnings = find_opening(marks, (mw, mh, md), mh)
     warnings += open_warnings
     if interior.any and not opening:
         warnings.append("Se ignoran las texturas interiores: el objeto no tiene línea de corte (no se abre).")
 
     # Orientación de las vistas y forma: primitiva simple si explica las siluetas, si no volumen de las vistas
-    _report(progress, 0.08, "Analizando la forma del objeto...")
+    invoke_progress(progress, 0.08, "Analizando la forma del objeto...")
     flips = {}
     if {"left", "right", "top", "bottom"} & set(masks):
         flips, score = detect_orientation(masks, dims)
         if score < 0.9:
             warnings.append("Las vistas no son del todo coherentes entre sí; el modelo puede perder detalle.")
-    skeleton = _skeleton(joint_marks, masks, dims, flips, (mw, mh, md), warnings)
+    skeleton = _skeleton(marks.joints, masks, dims, flips, (mw, mh, md), warnings)
     low_shape, _ = grid_shape(dims, 40)
     primitive, iou = fit_primitive(make_arrays(masks, low_shape), low_shape, flips)
 
@@ -120,7 +77,7 @@ def generate_shape(view_paths: dict, grid_paths: dict, progress=None, interior_p
         core = fit_core(masks, dims, flips)
         if core is not None:
             return _ellipsoid(masks, images, dims, flips, mh, opening, core["inliers"], marks, metric, warnings, progress,
-                              t0, interior, core, footprints(overlays, views), skeleton)
+                              t0, interior, core, overlays, skeleton)
 
     if primitive:
         ext = np.array([w, 1.0, d])
@@ -128,7 +85,7 @@ def generate_shape(view_paths: dict, grid_paths: dict, progress=None, interior_p
         grids = PRIMITIVE_GRID_ROUND if is_round(primitive) else PRIMITIVE_GRID_SHARP
         levels = []
         for li, (n_around, n_lat) in enumerate(grids):
-            _report(progress, 0.2 + 0.4 * li / len(grids), f"Generando LOD{li}...")
+            invoke_progress(progress, 0.2 + 0.4 * li / len(grids), f"Generando LOD{li}...")
             v, f = primitive_mesh(primitive, ext, n_around, n_lat)
             if not is_round(primitive):
                 v, f = decimate(v, f, SHARP_CLEANUP[li] * size_ref, 12)
@@ -136,7 +93,7 @@ def generate_shape(view_paths: dict, grid_paths: dict, progress=None, interior_p
     else:
         shape, cell = grid_shape(dims, RESOLUTION if skeleton is None else RESOLUTION_RIG)
         vol, _ = compose(make_arrays(masks, shape), shape, **flips)
-        _report(progress, 0.2, "Extrayendo superficie...")
+        invoke_progress(progress, 0.2, "Extrayendo superficie...")
         V, F = surface_nets(np.pad(vol, PAD))
         if len(F) == 0:
             raise ValueError("No se pudo generar volumen. Revisa que las vistas correspondan al mismo objeto.")
@@ -151,15 +108,15 @@ def generate_shape(view_paths: dict, grid_paths: dict, progress=None, interior_p
         for li, tol in enumerate(LOD_TOLERANCE if skeleton is None else LOD_TOLERANCE_RIG):
             a, b = 0.3 + 0.3 * li / 4, 0.3 + 0.3 * (li + 1) / 4
             msg = f"Optimizando LOD{li}..."
-            _report(progress, a, msg)
+            invoke_progress(progress, a, msg)
             cur_v, cur_f = decimate(cur_v, cur_f, tol * size_ref, 12,
-                                    lambda f, a=a, b=b, msg=msg: _report(progress, a + (b - a) * f, msg))
+                                    lambda f, a=a, b=b, msg=msg: invoke_progress(progress, a + (b - a) * f, msg))
             levels.append((cur_v, cur_f))
 
     if skeleton is not None:                    # más vértices junto a las articulaciones (el esqueleto está en metros)
         unit = skeleton.scaled(float(ext[1]) / mh)
         levels = [refine_mesh(v, f, unit) for v, f in levels]
-    _report(progress, 0.68, "Preparando textura...")
+    invoke_progress(progress, 0.68, "Preparando textura...")
     box_lo = np.array([-ext[0] / 2, 0.0, -ext[2] / 2])
     atlas = Atlas(images, masks, (box_lo, box_lo + ext), flips)
     if opening:
@@ -167,7 +124,7 @@ def generate_shape(view_paths: dict, grid_paths: dict, progress=None, interior_p
     crease = 60.0 if primitive and is_round(primitive) else 40.0
     scale = mh / float(ext[1])
 
-    _report(progress, 0.78, "Construyendo el modelo...")
+    invoke_progress(progress, 0.78, "Construyendo el modelo...")
     lods, openable = [], False
     for li, (v, f) in enumerate(levels):
         parts, was_split, colors = _build_parts(v, f, opening, atlas, crease)
@@ -195,8 +152,8 @@ def generate_shape(view_paths: dict, grid_paths: dict, progress=None, interior_p
     }
     if skeleton is not None:
         info["skeleton"] = {"joints": len(skeleton)}
-    _report(progress, 0.92, "Modelo generado")
-    return ShapeResult(lods=lods, warnings=warnings, info=info, marks=marks)
+    invoke_progress(progress, 0.92, "Modelo generado")
+    return ShapeResult(lods=lods, warnings=warnings, info=info, marks=marks.to_dict())
 
 
 def _skeleton(joint_marks, masks, dims, flips, dims_m, warnings):
@@ -246,15 +203,15 @@ def _ellipsoid(masks, images, dims, flips, height_m, opening, iou, marks, metric
     box = np.array([w, 1.0, d])
     ext = box if core is None else 2 * core["semi"]
 
-    _report(progress, 0.3, "Pintando la textura...")
+    invoke_progress(progress, 0.3, "Pintando la textura...")
     texture = bake_equirect(images, masks, ext, flips, frames=None if core is None else core["frames"])
     extras = None
     if core is not None:
-        _report(progress, 0.45, "Generando los salientes...")
+        invoke_progress(progress, 0.45, "Generando los salientes...")
         extras = build_extras(masks, images, fp_masks, tuple(box), flips, core)
         if extras is None:
             warnings.append("No se detectaron salientes: el objeto se genera como un elipsoide.")
-    _report(progress, 0.6, "Preparando la vista previa...")
+    invoke_progress(progress, 0.6, "Preparando la vista previa...")
     model, open_info = preview_model(ext, texture, opening, interior, None if core is None else core["center"], extras)
     if opening and open_info is None:
         warnings.append("No se pudo abrir el objeto por la línea de corte marcada (el corte no da una sola sección).")
@@ -270,10 +227,10 @@ def _ellipsoid(masks, images, dims, flips, height_m, opening, iou, marks, metric
             "metric": metric}
     if extras is not None:
         info["extras"] = {"triangles": extra_tris}
-    _report(progress, 0.92, "Modelo generado")
+    invoke_progress(progress, 0.92, "Modelo generado")
     model = model.scaled(scale, scale)
     if skeleton is not None:
         attach_skeleton(model, skeleton)
         info["skeleton"] = {"joints": len(skeleton)}
     return ShapeResult(lods=[model], warnings=warnings, info=info, descriptor=desc,
-                       texture=texture, marks=marks)
+                       texture=texture, marks=marks.to_dict())

@@ -24,7 +24,7 @@ class Part:
 class Model:
     parts: list
     texture: Optional[np.ndarray] = None   # (h,w,4) uint8
-    skeleton: Optional[object] = None      # Skeleton (app.shape.skeleton) en el mismo espacio que los vértices
+    skeleton: Optional[object] = None      # Skeleton (app.shape.rig.skeleton) en el mismo espacio que los vértices
 
     @property
     def triangles(self) -> int:

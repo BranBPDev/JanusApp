@@ -5,7 +5,7 @@ from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QScrollArea, QVBoxLay
 
 from app.gui.viewer import render_thumbnail
 from app.gui.widgets import icon_button, make_card, page_layout
-from app.shape.project import list_projects, load_model
+from app.shape.storage.project import list_projects, load_model
 
 THUMB = 64
 _thumbs = {}   # (carpeta, fecha de modificación) -> miniatura ya renderizada
@@ -31,7 +31,7 @@ class HomePage(QWidget):
 
     def __init__(self, info: dict):
         super().__init__()
-        lay = page_layout(self, "Bienvenido a Janus", "Conversión de vistas 2D en modelos 3D optimizados.")
+        lay = page_layout(self, "Bienvenido a Janus", "Conversión de un JSON (medidas, texturas, marcas y esqueleto) en modelos 3D optimizados.")
         lay.addSpacing(14)
         row = QHBoxLayout()
         row.setSpacing(16)
@@ -81,7 +81,7 @@ class HomePage(QWidget):
         text.addWidget(QLabel(f"{info.triangles:,} triángulos{opens} · {_date(info.updated)}", objectName="Muted"))
         h.addLayout(text, 1)
 
-        edit = icon_button("edit", "#8A90A6", "IconEdit", "Editar las vistas y volver a generar", size=30)
+        edit = icon_button("edit", "#8A90A6", "IconEdit", "Abrir el JSON y volver a generar", size=30)
         edit.clicked.connect(lambda: self.edit_requested.emit(info.name))
         h.addWidget(edit)
         self.rows.addWidget(row)

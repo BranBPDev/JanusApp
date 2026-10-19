@@ -2,7 +2,7 @@ import math
 
 import numpy as np
 
-from app.shape.skeleton import pose_frames, skin_vertices, swing_rotations
+from app.shape.rig.skeleton import pose_frames, skin_vertices, swing_rotations
 
 _LIGHT = np.array([-0.4, 0.6, 0.7]) / np.linalg.norm([-0.4, 0.6, 0.7])
 _DEFAULT = np.array([170.0, 178.0, 214.0])

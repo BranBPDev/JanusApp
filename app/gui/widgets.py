@@ -1,12 +1,6 @@
-from pathlib import Path
-
 from PySide6.QtCore import QPointF, Qt
 from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap, QPolygonF
-from PySide6.QtWidgets import QFileDialog, QFrame, QHBoxLayout, QLabel, QToolButton, QVBoxLayout, QWidget
-
-from app.shape.naming import IMAGE_FILTER, IMAGE_SUFFIXES
-
-PREVIEW = 84
+from PySide6.QtWidgets import QFrame, QLabel, QToolButton, QVBoxLayout, QWidget
 
 
 def icon(kind: str, color: str) -> QIcon:
@@ -60,82 +54,3 @@ def make_card(title: str, value: str) -> QFrame:
     lay.addWidget(QLabel(title, objectName="CardTitle"))
     lay.addWidget(QLabel(value, objectName="CardValue"))
     return card
-
-
-def set_thumbnail(label: QLabel, path, size: int):
-    """Muestra una imagen escalada en un QLabel (o lo vacía si no hay imagen)."""
-    pix = QPixmap(str(path)) if path else QPixmap()
-    if pix.isNull():
-        label.clear()
-    else:
-        label.setPixmap(pix.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-
-
-class Preview(QLabel):
-    """Cuadro de previsualización con un botón + (verde) y una papelera (roja) superpuestos."""
-
-    def __init__(self):
-        super().__init__(objectName="Thumb")
-        self.path = None
-        self.setFixedSize(PREVIEW, PREVIEW)
-        self.setAlignment(Qt.AlignCenter)
-        self.setAcceptDrops(True)
-
-        self.add_btn = icon_button("plus", "#22C55E", "IconAdd", "Elegir imagen", parent=self)
-        self.add_btn.move(4, 4)
-        self.add_btn.clicked.connect(self._pick)
-        self.del_btn = icon_button("trash", "#EF4444", "IconDel", "Quitar imagen", parent=self)
-        self.del_btn.move(PREVIEW - 28, 4)
-        self.del_btn.clicked.connect(lambda: self.set_path(None))
-        self._refresh()
-
-    def _pick(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Seleccionar imagen", "", IMAGE_FILTER)
-        if path:
-            self.set_path(path)
-
-    def set_path(self, path):
-        self.path = path
-        self._refresh()
-
-    def _refresh(self):
-        set_thumbnail(self, self.path, PREVIEW - 4)
-        self.del_btn.setVisible(bool(self.path))
-        self.add_btn.raise_()
-        self.del_btn.raise_()
-
-    def dragEnterEvent(self, e):
-        if e.mimeData().hasUrls():
-            e.acceptProposedAction()
-
-    def dropEvent(self, e):
-        for url in e.mimeData().urls():
-            p = url.toLocalFile()
-            if Path(p).suffix.lower() in IMAGE_SUFFIXES:
-                self.set_path(p)
-                break
-
-
-class ViewPair(QFrame):
-    """Dos imágenes con título y pie (por defecto: vista y malla)."""
-
-    def __init__(self, title: str, captions=("Vista", "Malla")):
-        super().__init__(objectName="Card")
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(8, 6, 8, 8)
-        lay.setSpacing(4)
-        lay.addWidget(QLabel(title, objectName="Brand"))
-        row = QHBoxLayout()
-        row.setSpacing(8)
-        self.view, self.grid = Preview(), Preview()
-        for preview, caption in ((self.view, captions[0]), (self.grid, captions[1])):
-            col = QVBoxLayout()
-            col.setSpacing(2)
-            col.addWidget(preview)
-            col.addWidget(QLabel(caption, objectName="CardTitle", alignment=Qt.AlignCenter))
-            row.addLayout(col)
-        lay.addLayout(row)
-
-    def set_paths(self, first, second):
-        self.view.set_path(first)
-        self.grid.set_path(second)

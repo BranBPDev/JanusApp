@@ -1,24 +1,21 @@
 import re
-import shutil
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 from PIL import Image
 
-from app.shape.export import read_obj, texture_png, write_glb, write_obj
-from app.shape.naming import IMAGE_SUFFIXES
 from app.shape.pipeline import ShapeResult
-from app.shape.skeleton import Skeleton, attach_skeleton
+from app.shape.rig.skeleton import Skeleton, attach_skeleton
+from app.shape.storage.export import read_obj, texture_png, write_glb, write_obj
 from app.utils.json_util import read_json, save_json
 from app.utils.paths_util import PROJECTS_DIR
+from app.utils.pool_util import parallel_map
 
 PHASES = ("shape", "texture", "collision", "rig")
 MANIFEST = "manifest.json"
-# Entradas de un proyecto: carpeta dentro del proyecto y clave del manifest.
-INPUT_FOLDERS = {"views": "views", "grids": "grids", "interiors": "interiors"}
+SOURCE = "source/objeto.json"   # el JSON del objeto: lo único que hace falta para regenerarlo
 
 
 def sanitize_name(name: str) -> str:
@@ -36,39 +33,22 @@ def _read_manifest(root: Path) -> dict:
         return {}
 
 
-def _copy_inputs(root: Path, folder: str, paths: Optional[dict]) -> dict:
-    """Copia las imágenes de entrada a <proyecto>/<folder>/<clave>.<ext> y devuelve {clave: ruta relativa}."""
-    saved = {}
-    for key, src in (paths or {}).items():
-        if not src:
-            continue
-        src = Path(src)
-        dest = root / folder / f"{key}{src.suffix.lower()}"
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        if src.resolve() != dest.resolve():
-            shutil.copyfile(src, dest)
-        saved[key] = f"{folder}/{dest.name}"
-    return saved
-
-
-def save_shape(name: str, view_paths: dict, grid_paths: dict, result: ShapeResult, interior_paths: dict = None) -> Path:
-    """Guarda vistas, mallas, texturas interiores, un GLB por LOD, el OBJ/MTL/textura del LOD0 y manifest.json
-    (conserva las demás fases). Las esferas/elipsoides también se exportan como GLB ya cortado."""
+def save_shape(name: str, result: ShapeResult, source_text: str = None) -> Path:
+    """Guarda el JSON de origen, un GLB por LOD, el OBJ/MTL/textura del LOD0 y manifest.json (conserva las demás fases).
+    Las esferas/elipsoides también se exportan como GLB ya cortado."""
     root = project_dir(name)
     shape_dir = root / "shape"
     shape_dir.mkdir(parents=True, exist_ok=True)
-
-    saved = {k: _copy_inputs(root, folder, paths)
-             for k, folder, paths in (("views", "views", view_paths), ("grids", "grids", grid_paths),
-                                      ("interiors", "interiors", interior_paths))}
+    if source_text is not None:
+        (root / SOURCE).parent.mkdir(parents=True, exist_ok=True)
+        (root / SOURCE).write_text(source_text, encoding="utf-8")
 
     for old in shape_dir.iterdir():
         old.unlink()
-    lods = []
-    for i, model in enumerate(result.lods):
-        write_glb(shape_dir / f"lod{i}.glb", model, name)
-        lods.append({"level": i, "glb": f"shape/lod{i}.glb", "triangles": model.triangles,
-                     "vertices": model.vertex_count})
+    write_glb_levels = lambda item: write_glb(shape_dir / f"lod{item[0]}.glb", item[1], name)
+    parallel_map(write_glb_levels, enumerate(result.lods))          # los LOD son independientes: se escriben a la vez
+    lods = [{"level": i, "glb": f"shape/lod{i}.glb", "triangles": m.triangles, "vertices": m.vertex_count}
+            for i, m in enumerate(result.lods)]
     lod0 = result.lods[0]
     write_obj(shape_dir / "lod0.obj", lod0, name)
     if lod0.texture is not None:
@@ -77,13 +57,13 @@ def save_shape(name: str, view_paths: dict, grid_paths: dict, result: ShapeResul
               "open_angle_deg": p.open_angle} for p in lod0.parts]
 
     manifest = _read_manifest(root)
+    for stale in ("views", "grids", "interiors"):      # entradas de proyectos antiguos (hechos con imágenes)
+        manifest.pop(stale, None)
     phases = manifest.get("phases", {})
     manifest.update({
         "name": name,
         "updated": datetime.now().isoformat(timespec="seconds"),
-        "views": saved["views"],
-        "grids": saved["grids"],
-        "interiors": saved["interiors"],
+        "source": SOURCE if source_text is not None else manifest.get("source"),
         "annotations": result.marks,
         "shape": {"parts": parts, "lods": lods, "primitive_object": result.descriptor, **result.info,
                   "skeleton": None if lod0.skeleton is None else lod0.skeleton.to_dict()},
@@ -121,13 +101,10 @@ def list_projects() -> list:
     return sorted(found, key=lambda p: p.updated, reverse=True)
 
 
-def load_project_inputs(name: str) -> dict:
-    """Rutas absolutas (solo las que existen) de las vistas, mallas y texturas interiores de un proyecto."""
-    root = project_dir(name)
-    manifest = _read_manifest(root)
-    return {key: {k: str(root / rel) for k, rel in manifest.get(key, {}).items()
-                  if (root / rel).suffix.lower() in IMAGE_SUFFIXES and (root / rel).is_file()}
-            for key in INPUT_FOLDERS}
+def load_project_source(name: str):
+    """Texto del JSON con el que se generó el proyecto, o None si no lo tiene (proyectos hechos con imágenes)."""
+    file = project_dir(name) / SOURCE
+    return file.read_text(encoding="utf-8") if file.is_file() else None
 
 
 def load_model(root: Path):

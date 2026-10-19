@@ -7,7 +7,7 @@ import numpy as np
 from PIL import Image
 
 from app.shape.model import Model, Part
-from app.shape.skeleton import swing_pose
+from app.shape.rig.skeleton import swing_pose
 
 
 def texture_png(texture: np.ndarray) -> bytes:

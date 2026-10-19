@@ -1,25 +1,19 @@
-"""Esqueletos: huesos marcados en las mallas -> articulaciones 3D -> pesos de piel -> pose.
+"""Esqueletos: huesos del JSON -> articulaciones 3D -> pesos de piel -> pose.
 
-Marcas de las mallas (cualquier vista, mismas coordenadas que el resto de marcas):
-  una articulación es un punto de color de la PALETA (cada color es un número de articulación, 0-59) rodeado de un
-  anillo del color de su articulación padre. Un punto suelto, sin anillo, es la raíz del esqueleto.
-  Los colores de la paleta tienen todos los canales entre 125 y 255, así que nunca se confunden con las demás marcas.
-  La posición 3D sale de combinar las vistas (frente/detrás: x,y · lados: z,y · arriba/abajo: x,z); lo que no se ve en
-  ninguna vista se coloca en el centro del volumen del objeto."""
+Cada hueso del JSON ("marcas.huesos") tiene un id (0-59, un color de la PALETA en la vista previa), su padre (null = raíz)
+y su posición en una o varias vistas (mismas coordenadas que el resto de marcas). La posición 3D sale de combinar las
+vistas (frente/detrás: x,y · lados: z,y · arriba/abajo: x,z); lo que no se ve en ninguna vista se coloca a partir del
+hueso padre o, si no hay, en el centro del volumen del objeto."""
 import itertools
 import math
 from dataclasses import dataclass, field
 
 import numpy as np
-from PIL import Image
 
-from app.shape.metric import _components
-from app.shape.opening import _to_world
+from app.shape.geometry.coords import VIEW_AXES, view_to_world
 
 LEVELS = (125, 170, 215, 255)
 PALETTE = np.array([c for c in itertools.product(LEVELS, repeat=3) if not (c[0] == c[1] == c[2])], np.int32)   # 60 colores
-TOLERANCE = 18          # diferencia máxima por canal para reconocer un color de la paleta
-MIN_PIXELS = 5
 MAX_JOINTS = len(PALETTE)
 INFLUENCES = 4          # huesos que pueden mover cada vértice
 FALLOFF = 4.0           # cuanto mayor, más "duros" son los pesos lejos de las articulaciones
@@ -28,56 +22,6 @@ REFINE_MIN = 0.12       # arista mínima junto a una articulación (fracción de
 REFINE_MAX = 0.6        # arista máxima en cualquier punto
 REFINE_NEAR = 0.9       # la arista admitida crece con la distancia a la articulación más cercana
 TIP = 0.6               # prolongación del último hueso de cada rama (fracción de su longitud)
-AXES = {"front": (0, 1), "back": (0, 1), "left": (2, 1), "right": (2, 1), "top": (0, 2), "bottom": (0, 2)}
-
-
-def palette_hex(joint_id: int) -> str:
-    return "#{:02x}{:02x}{:02x}".format(*[int(c) for c in PALETTE[joint_id]])
-
-
-# ---------------------------------------------------------------- lectura de las mallas
-def analyze_joints(path, original_size, box_px, cell_px, cell_m):
-    """Articulaciones marcadas en la malla de una vista: [{'id', 'parent' (o None), 'x_m', 'y_m'}] (metros desde la esquina
-    inferior izquierda del objeto en esa vista, como las demás marcas)."""
-    img = Image.open(path).convert("RGBA")
-    if img.size != tuple(original_size):
-        img = img.resize(tuple(original_size), Image.NEAREST)
-    a = np.asarray(img).astype(np.int32)
-    rgb = a[..., :3]
-    lo, hi = rgb.min(axis=2), rgb.max(axis=2)
-    ys, xs = np.nonzero((a[..., 3] >= 200) & (lo >= 105) & (hi - lo >= 27))
-    if not len(ys):
-        return []
-    dist = np.abs(rgb[ys, xs][:, None, :] - PALETTE[None]).max(axis=2)
-    best = dist.argmin(axis=1)
-    ok = dist[np.arange(len(best)), best] <= TOLERANCE
-    ys, xs, best = ys[ok], xs[ok], best[ok]
-
-    comps = []
-    for cid in np.unique(best):
-        sel = best == cid
-        for c in _components(list(zip(ys[sel].tolist(), xs[sel].tolist()))):
-            if len(c) >= MIN_PIXELS:
-                p = np.asarray(c, np.float64)
-                comps.append({"id": int(cid), "y": p[:, 0].mean(), "x": p[:, 1].mean(),
-                              "size": float(max(np.ptp(p[:, 0]), np.ptp(p[:, 1])) + 1)})
-    comps.sort(key=lambda c: c["size"])
-
-    x0, _, _, y1 = box_px
-    out, used = [], set()
-    for i, c in enumerate(comps):
-        if i in used:
-            continue
-        parent = None
-        for j in range(i + 1, len(comps)):           # anillo concéntrico más pequeño que rodea al punto
-            e = comps[j]
-            if j not in used and e["size"] > c["size"] + 2 and math.hypot(e["x"] - c["x"], e["y"] - c["y"]) <= max(2.0, 0.25 * e["size"]):
-                used.add(j)
-                parent = e["id"] if e["id"] != c["id"] else None
-                break
-        out.append({"id": c["id"], "parent": parent, "x_m": round((c["x"] - x0) / cell_px * cell_m, 4),
-                    "y_m": round((y1 - c["y"]) / cell_px * cell_m, 4)})
-    return out
 
 
 # ---------------------------------------------------------------- esqueleto
@@ -127,15 +71,15 @@ def bone_name(joint_id: int) -> str:
 
 def build_skeleton(per_view: dict, dims_m, depth_mid=None):
     """Combina las articulaciones de las vistas en un esqueleto 3D. Devuelve (Skeleton o None, avisos).
-    'per_view' = {vista: salida de analyze_joints}; 'dims_m' = (ancho, alto, fondo) en metros; 'depth_mid(eje, pos)' devuelve el
+    'per_view' = {vista: [{'id', 'parent', 'x_m', 'y_m'}]} (Marks.joints); 'dims_m' = (ancho, alto, fondo) en metros; 'depth_mid(eje, pos)' devuelve el
     centro del volumen del objeto a lo largo de 'eje' para la posición (con NaN en los ejes desconocidos)."""
     warnings = []
     obs, parents = {}, {}
     for key, joints in per_view.items():
         for j in joints:
-            world = _to_world(key, j["x_m"], j["y_m"], dims_m)
+            world = view_to_world(key, j["x_m"], j["y_m"], dims_m)
             slot = obs.setdefault(j["id"], {0: [], 1: [], 2: []})
-            for axis in AXES[key]:
+            for axis in VIEW_AXES[key]:
                 slot[axis].append(float(world[axis]))
             parents.setdefault(j["id"], []).append(j["parent"])
     if not obs:
@@ -164,7 +108,7 @@ def build_skeleton(per_view: dict, dims_m, depth_mid=None):
             parent[jid] = None
     roots = sorted(j for j, p in parent.items() if p is None)
     if not roots:
-        return None, warnings + ["El esqueleto no tiene raíz: dibuja un punto sin anillo en la articulación principal."]
+        return None, warnings + ["El esqueleto no tiene raíz: pon «padre»: null en el hueso principal."]
     for extra in roots[1:]:
         parent[extra] = roots[0]
         warnings.append(f"Hay varias raíces en el esqueleto: la articulación {extra} se une a la {roots[0]}.")

@@ -58,26 +58,11 @@ def taubin_smooth(V: np.ndarray, F: np.ndarray, iters: int, lam: float = 0.5, mu
     return V
 
 
-def vertex_normals(V: np.ndarray, F: np.ndarray) -> np.ndarray:
-    fn = np.cross(V[F[:, 1]] - V[F[:, 0]], V[F[:, 2]] - V[F[:, 0]])
-    N = np.zeros_like(V, dtype=np.float64)
-    for k in range(3):
-        for ax in range(3):
-            N[:, ax] += np.bincount(F[:, k], weights=fn[:, ax], minlength=len(V))
-    length = np.linalg.norm(N, axis=1, keepdims=True)
-    return N / np.maximum(length, 1e-12)
-
-
 def is_watertight(F: np.ndarray) -> bool:
     e = np.concatenate([F[:, [0, 1]], F[:, [1, 2]], F[:, [2, 0]]])
     e.sort(axis=1)
     key = e[:, 0].astype(np.int64) * (int(e.max()) + 1) + e[:, 1]
     return bool((np.unique(key, return_counts=True)[1] == 2).all())
-
-
-def signed_volume(V: np.ndarray, F: np.ndarray) -> float:
-    p0, p1, p2 = V[F[:, 0]], V[F[:, 1]], V[F[:, 2]]
-    return float(np.einsum("ij,ij->i", p0, np.cross(p1, p2)).sum() / 6.0)
 
 
 def crease_normals(V: np.ndarray, F: np.ndarray, angle_deg: float = 40.0) -> np.ndarray:

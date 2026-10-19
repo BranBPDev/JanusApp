@@ -1,6 +1,6 @@
 import heapq
 import numpy as np
-from app.shape.mesh_ops import compact, unique_edges
+from app.shape.geometry.mesh_ops import unique_edges
 
 
 def _vertex_quadrics(V, F):
