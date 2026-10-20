@@ -116,7 +116,7 @@ def _unit(v):
 def _chain(center, radius, axis, ring, count, length, width, wire, hole=None):
     """Cadena de eslabones ovalados alrededor de la esfera: sigue el círculo de radio 'ring' perpendicular a 'axis' (el eje
     de la esfera que pasa por su centro). Los eslabones se alternan: uno tumbado sobre la superficie y otro de canto.
-    'hole' = (punto de la esfera, distancia): se omiten los eslabones más cerca de ese punto."""
+    'hole' = (punto de la esfera, distancia): la cadena queda abierta alrededor de ese punto y sus dos extremos terminan justo en el borde del hueco."""
     r = wire / 2
     axis = _unit(axis)
     helper = np.array([0.0, 1.0, 0.0]) if abs(axis[1]) < 0.9 else np.array([1.0, 0.0, 0.0])
@@ -125,13 +125,22 @@ def _chain(center, radius, axis, ring, count, length, width, wire, hole=None):
     base = axis * math.sqrt(radius ** 2 - ring ** 2)
     a, b = length / 2 - r, width / 2 - r
     phi = np.linspace(0, 2 * math.pi, LINK_SAMPLES, endpoint=False)
+    angles = [2 * math.pi * i / count for i in range(count)]
+    if hole is not None:       # cadena abierta: va de un borde del hueco al otro, con el primer y el último eslabón justo en ellos
+        grid = np.linspace(0, 2 * math.pi, 4096, endpoint=False)
+        pts = base + ring * (np.cos(grid)[:, None] * u + np.sin(grid)[:, None] * v)
+        free = np.linalg.norm(pts - hole[0], axis=1) >= hole[1]
+        if free.any() and not free.all():
+            start = int(np.argmax(free & ~np.roll(free, 1)))            # primer punto libre tras el hueco
+            free = np.roll(free, -start)
+            first = grid[start]
+            span = (np.nonzero(free)[0].max()) * (grid[1] - grid[0])
+            n_arc = max(2, round(span / (2 * math.pi) * count) + 1)
+            angles = [first + span * i / (n_arc - 1) for i in range(n_arc)]
     Vs, Fs, off = [], [], 0
-    for i in range(count):
-        th = 2 * math.pi * i / count
+    for i, th in enumerate(angles):
         radial = math.cos(th) * u + math.sin(th) * v
         p = base + ring * radial
-        if hole is not None and np.linalg.norm(p - hole[0]) < hole[1]:
-            continue
         n = p / radius
         t = -math.sin(th) * u + math.cos(th) * v
         s = np.cross(n, t)
