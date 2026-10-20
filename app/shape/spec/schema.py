@@ -28,8 +28,10 @@ Estructura (todas las medidas en METROS):
      "inclinacion_grados": 45, "ancho_m": 0.04, "sobresale_m": 0.012,
      "margen_m": 0.07,                           # altura mínima sobre la línea de corte (deja libre la banda y el botón)
      "simetrica": true},                         # true = una a cada lado (izquierda y derecha)
-    {"tipo": "cadena", "textura": "rojo", "radio_m": 0.125, "altura_m": 0.07,   # anillo de eslabones paralelo a la banda
-     "eslabones": 28, "largo_m": 0.03, "ancho_m": 0.014, "grosor_m": 0.005}
+    {"tipo": "cadena", "textura": "rojo", "radio_m": 0.125,     # anillo de eslabones alrededor de la esfera
+     "eje": [0, 1, 0], "radio_aro_m": 0.1,       # círculo perpendicular a ese eje (aquí, horizontal) y su radio
+     "eslabones": 24, "largo_m": 0.04, "ancho_m": 0.018, "grosor_m": 0.006,
+     "hueco": {"eje": [0, 0, 1], "radio_m": 0.06}}      # (opcional) sin eslabones cerca de ese punto de la esfera
   ],
   "marcas": {
     "corte":     [{"vista": "derecha", "linea": [[0, 0.1], [0.2, 0.1]]}],         # por aquí se abre
@@ -186,10 +188,25 @@ class ObjectSpec:
                 raise SpecError(f"{where}: falta «radio_m» (radio de la esfera en metros).")
             for key, default in RELIEF_KINDS[r["tipo"]].items():
                 v = r.get(key, default)
-                if isinstance(default, bool):
+                if isinstance(default, (bool, list, type(None))):
                     continue
                 if not isinstance(v, (int, float)) or v <= 0:
                     raise SpecError(f"{where}: «{key}» debe ser un número mayor que 0" + (" (en metros)." if key.endswith("_m") else "."))
+            if r["tipo"] == "cadena":
+                self._check_chain(r, where)
+
+    @staticmethod
+    def _check_chain(r, where):
+        for key in ("eje", "hueco"):
+            v = r.get(key)
+            axis = v.get("eje") if key == "hueco" and isinstance(v, dict) else v
+            if v is not None and not (isinstance(axis, list) and len(axis) == 3 and all(isinstance(c, (int, float)) for c in axis)
+                                      and any(axis)):
+                raise SpecError(f"{where}: «{key}» debe llevar un eje [x, y, z]" + (" y «radio_m»." if key == "hueco" else "."))
+        if r.get("hueco") is not None and not isinstance(r["hueco"].get("radio_m"), (int, float)):
+            raise SpecError(f"{where}: «hueco» necesita «radio_m» en metros.")
+        if not 0 < r.get("radio_aro_m", 0.1) < r["radio_m"]:
+            raise SpecError(f"{where}: «radio_aro_m» debe ser menor que el radio de la esfera ({r['radio_m']} m).")
 
     def _check_marks(self):
         for kind in MARK_KINDS:

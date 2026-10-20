@@ -18,6 +18,8 @@ FILL_TOLERANCE = 0.03
 class View:
     mask: np.ndarray    # silueta booleana, recortada al cuadro del objeto
     rgba: np.ndarray    # imagen RGBA uint8 con el mismo tamaño
+    body_mask: np.ndarray = None   # solo el cuerpo (sin los relieves): lo que se usa para pintar la textura de la esfera
+    body_rgba: np.ndarray = None
 
 
 @dataclass
@@ -38,7 +40,9 @@ def _view(spec: ObjectSpec, name, reliefs=()):
     rgb, sil = draw_layers(spec.textures, spec.light, spec.views[name]["capas"], frame)
     outline = parse_color(spec.outline.get("color", "#1c1c22"), "contorno") if spec.outline else None
     rel = draw_reliefs(reliefs, VIEW_KEYS[name], (spec.width, spec.height, spec.depth), frame)
+    body = None
     if rel is not None:
+        body = downsample(rgb, sil)                         # el cuerpo tal como estaba antes de añadir los relieves
         mask_r, rgb_r = rel
         rgb[mask_r] = rgb_r[mask_r]
         sil = sil | mask_r
@@ -58,8 +62,10 @@ def _view(spec: ObjectSpec, name, reliefs=()):
         notes.append(f"La silueta de la vista «{name}» se sale del cuadro de «medidas_m» ({w:.3f} × {h:.3f} m).")
     bh, bw = mask[box].shape
     got = ((xs.max() - xs.min() + 1) / spec.ppm, (ys.max() - ys.min() + 1) / spec.ppm)
-    if abs(got[0] - w) / w > FILL_TOLERANCE or abs(got[1] - h) / h > FILL_TOLERANCE:
+    if not reliefs and (abs(got[0] - w) / w > FILL_TOLERANCE or abs(got[1] - h) / h > FILL_TOLERANCE):   # con relieves la silueta no llena la caja
         notes.append(f"La silueta de la vista «{name}» mide {got[0]:.3f} × {got[1]:.3f} m y las medidas dicen {w:.3f} × {h:.3f} m.")
+    if body is not None:
+        return View(mask[box], rgba[box], (body[..., 3] >= 128)[box], body[box]), notes
     return View(mask[box], rgba[box]), notes
 
 

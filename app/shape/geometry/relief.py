@@ -10,10 +10,12 @@ import numpy as np
 
 KINDS = {   # tipo -> parámetros (además de 'textura' y 'radio_m') con su valor por defecto
     "franja": {"inclinacion_grados": 45.0, "ancho_m": 0.04, "sobresale_m": 0.01, "margen_m": 0.05, "simetrica": True},
-    "cadena": {"altura_m": 0.07, "eslabones": 28, "largo_m": 0.03, "ancho_m": 0.014, "grosor_m": 0.005},
+    "cadena": {"eje": [0.0, 1.0, 0.0], "radio_aro_m": 0.1, "eslabones": 24, "largo_m": 0.04, "ancho_m": 0.018, "grosor_m": 0.006,
+               "hueco": None},
 }
 EMBED = 0.003        # lo que se hunde la base de la pieza dentro del cuerpo para que no quede rendija
 ALONG, ACROSS = 64, 9
+TUBE_SIDES, LINK_SAMPLES = 6, 18      # detalle de cada eslabón (pocos triángulos: una cadena tiene cientos)
 
 
 @dataclass
@@ -84,7 +86,7 @@ def _strip(center, radius, tilt, width, rise, margin, side):
     return V, np.concatenate([F, np.array(walls, np.int64)])
 
 
-def _tube(points, binormal, radius, sides=8):
+def _tube(points, binormal, radius, sides=TUBE_SIDES):
     """Tubo de sección circular a lo largo de una curva plana cerrada (n, 3) cuyo plano tiene la normal 'binormal'."""
     n = len(points)
     tangent = np.roll(points, -1, axis=0) - np.roll(points, 1, axis=0)
@@ -106,19 +108,32 @@ def _tube(points, binormal, radius, sides=8):
     return V, F
 
 
-def _chain(center, radius, height, count, length, width, wire):
-    """Cadena de eslabones ovalados alrededor de la esfera, en un círculo horizontal a 'height' sobre el centro. Los eslabones
-    se alternan: uno tumbado sobre la superficie y otro de canto."""
+def _unit(v):
+    v = np.asarray(v, np.float64)
+    return v / np.linalg.norm(v)
+
+
+def _chain(center, radius, axis, ring, count, length, width, wire, hole=None):
+    """Cadena de eslabones ovalados alrededor de la esfera: sigue el círculo de radio 'ring' perpendicular a 'axis' (el eje
+    de la esfera que pasa por su centro). Los eslabones se alternan: uno tumbado sobre la superficie y otro de canto.
+    'hole' = (punto de la esfera, distancia): se omiten los eslabones más cerca de ese punto."""
     r = wire / 2
-    rho = math.sqrt(radius ** 2 - height ** 2)
+    axis = _unit(axis)
+    helper = np.array([0.0, 1.0, 0.0]) if abs(axis[1]) < 0.9 else np.array([1.0, 0.0, 0.0])
+    u = _unit(np.cross(axis, helper))
+    v = np.cross(axis, u)
+    base = axis * math.sqrt(radius ** 2 - ring ** 2)
     a, b = length / 2 - r, width / 2 - r
-    phi = np.linspace(0, 2 * math.pi, 28, endpoint=False)
+    phi = np.linspace(0, 2 * math.pi, LINK_SAMPLES, endpoint=False)
     Vs, Fs, off = [], [], 0
     for i in range(count):
         th = 2 * math.pi * i / count
-        p = np.array([rho * math.cos(th), height, rho * math.sin(th)])
+        radial = math.cos(th) * u + math.sin(th) * v
+        p = base + ring * radial
+        if hole is not None and np.linalg.norm(p - hole[0]) < hole[1]:
+            continue
         n = p / radius
-        t = np.array([-math.sin(th), 0.0, math.cos(th)])
+        t = -math.sin(th) * u + math.cos(th) * v
         s = np.cross(n, t)
         if i % 2 == 0:       # tumbado: el óvalo está en el plano (t, s)
             c = p + n * (r + 0.0005)
@@ -142,8 +157,9 @@ def build_reliefs(items, textures, dims):
         radius = float(p["radio_m"])
         center = np.array([dims[0] / 2, radius, dims[2] / 2])
         if item["tipo"] == "cadena":
-            V, F = _chain(center, radius, float(p["altura_m"]), int(p["eslabones"]), float(p["largo_m"]), float(p["ancho_m"]),
-                          float(p["grosor_m"]))
+            hole = None if not p.get("hueco") else (_unit(p["hueco"]["eje"]) * radius, float(p["hueco"]["radio_m"]))
+            V, F = _chain(center, radius, p["eje"], float(p["radio_aro_m"]), int(p["eslabones"]), float(p["largo_m"]),
+                          float(p["ancho_m"]), float(p["grosor_m"]), hole)
             out.append(ReliefMesh(V, F, flat_color(textures[p["textura"]]), center, radius))
             continue
         sides = (1, -1) if p["simetrica"] else (1,)
@@ -196,3 +212,16 @@ def to_extras(meshes, dims_m, height_m):
         texture[:, 4 * k:4 * k + 4, :3] = m.color
         uvs.append(np.broadcast_to(np.array([(k + 0.5) / len(meshes), 0.5]), (len(m.F), 3, 2)))
     return {"V": np.concatenate(Vs), "F": np.concatenate(Fs).astype(np.int32), "uv": np.concatenate(uvs), "texture": texture}
+
+
+def body_core(meshes, dims_m, height_m):
+    """Cuerpo esférico del que sobresalen los relieves, en el formato de 'fit_core' (alto del modelo = 1): centro, semiejes y
+    elipse del cuerpo en cada vista (fracciones del cuadro del objeto). None si no hay relieves."""
+    if not meshes:
+        return None
+    w, h, d = dims_m
+    r = meshes[0].radius
+    frames = {"front": (0.5, (h - r) / h, r / w, r / h), "back": (0.5, (h - r) / h, r / w, r / h),
+              "left": (0.5, (h - r) / h, r / d, r / h), "right": (0.5, (h - r) / h, r / d, r / h),
+              "top": (0.5, 0.5, r / w, r / d), "bottom": (0.5, 0.5, r / w, r / d)}
+    return {"center": np.array([0.0, r / height_m, 0.0]), "semi": np.full(3, r / height_m), "frames": frames, "inliers": 1.0}

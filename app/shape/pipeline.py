@@ -10,7 +10,7 @@ from app.shape.geometry.mesh_ops import build_attributes, crease_normals, is_wat
 from app.shape.geometry.opening import find_opening
 from app.shape.geometry.primitive import fit_primitive, is_round, primitive_mesh
 from app.shape.geometry.protrusion import build_extras, fit_core
-from app.shape.geometry.relief import to_extras
+from app.shape.geometry.relief import body_core, to_extras
 from app.shape.geometry.qem import decimate
 from app.shape.geometry.surface_nets import surface_nets
 from app.shape.model import Model, Part
@@ -71,11 +71,10 @@ def generate_shape(bp: Blueprint, progress=None) -> ShapeResult:
     primitive, iou = fit_primitive(make_arrays(masks, low_shape), low_shape, flips)
 
     if bp.reliefs:                              # cuerpo esférico + relieves calculados desde el JSON (no desde las siluetas)
-        core = fit_core(masks, dims, flips)
-        if core is not None:
-            return _ellipsoid(masks, images, dims, flips, mh, opening, core["inliers"], marks, metric, warnings, progress,
-                              t0, interior, core, None, skeleton, to_extras(bp.reliefs, (mw, mh, md), mh))
-        warnings.append("No se pudo ajustar el cuerpo esférico de las vistas: los relieves se ignoran.")
+        body = {k: v for k, v in bp.views.items() if v.body_rgba is not None}
+        return _ellipsoid({**masks, **{k: v.body_mask for k, v in body.items()}}, {**images, **{k: v.body_rgba for k, v in body.items()}},
+                          dims, flips, mh, opening, 1.0, marks, metric, warnings, progress, t0, interior,
+                          body_core(bp.reliefs, (mw, mh, md), mh), None, skeleton, to_extras(bp.reliefs, (mw, mh, md), mh))
 
     if is_ellipsoid(primitive):
         return _ellipsoid(masks, images, dims, flips, mh, opening, iou, marks, metric, warnings, progress, t0, interior,
