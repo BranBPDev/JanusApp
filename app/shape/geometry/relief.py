@@ -1,6 +1,6 @@
-"""Relieves del JSON: piezas que sobresalen de un cuerpo esférico y siguen su curvatura (franjas, por ahora).
+"""Relieves del JSON: piezas que sobresalen de un cuerpo esférico y siguen su curvatura (franjas y cadenas).
 
-Una «franja» es la zona de la esfera que queda a menos de ancho/2 de un círculo máximo inclinado, elevada 'sobresale_m'
+Una «cadena» es un anillo de eslabones ovalados que rodea el cuerpo en horizontal. Una «franja» es la zona de la esfera que queda a menos de ancho/2 de un círculo máximo inclinado, elevada 'sobresale_m'
 sobre la superficie. Se calcula en coordenadas de la caja del objeto (metros): x = ancho, y = alto (suelo en 0) y
 z = fondo (el frente es z = fondo), y de ahí salen tanto la silueta de cada vista como la malla del modelo."""
 import math
@@ -8,8 +8,10 @@ from dataclasses import dataclass
 
 import numpy as np
 
-KINDS = ("franja",)
-DEFAULTS = {"inclinacion_grados": 45.0, "ancho_m": 0.04, "sobresale_m": 0.01, "margen_m": 0.05, "simetrica": True}
+KINDS = {   # tipo -> parámetros (además de 'textura' y 'radio_m') con su valor por defecto
+    "franja": {"inclinacion_grados": 45.0, "ancho_m": 0.04, "sobresale_m": 0.01, "margen_m": 0.05, "simetrica": True},
+    "cadena": {"altura_m": 0.07, "eslabones": 28, "largo_m": 0.03, "ancho_m": 0.014, "grosor_m": 0.005},
+}
 EMBED = 0.003        # lo que se hunde la base de la pieza dentro del cuerpo para que no quede rendija
 ALONG, ACROSS = 64, 9
 
@@ -82,13 +84,68 @@ def _strip(center, radius, tilt, width, rise, margin, side):
     return V, np.concatenate([F, np.array(walls, np.int64)])
 
 
+def _tube(points, binormal, radius, sides=8):
+    """Tubo de sección circular a lo largo de una curva plana cerrada (n, 3) cuyo plano tiene la normal 'binormal'."""
+    n = len(points)
+    tangent = np.roll(points, -1, axis=0) - np.roll(points, 1, axis=0)
+    tangent /= np.linalg.norm(tangent, axis=1, keepdims=True)
+    normal = np.cross(binormal, tangent)
+    ang = np.linspace(0, 2 * math.pi, sides, endpoint=False)
+    ring = np.cos(ang)[None, :, None] * normal[:, None, :] + np.sin(ang)[None, :, None] * binormal
+    V = (points[:, None, :] + radius * ring).reshape(-1, 3)
+    F = []
+    for i in range(n):
+        for k in range(sides):
+            a, b = i * sides + k, i * sides + (k + 1) % sides
+            c, d = ((i + 1) % n) * sides + (k + 1) % sides, ((i + 1) % n) * sides + k
+            F += [(a, b, c), (a, c, d)]
+    F = np.array(F, np.int64)
+    centers = np.repeat(points, sides, axis=0)
+    out = np.einsum("ij,ij->i", np.cross(V[F[:, 1]] - V[F[:, 0]], V[F[:, 2]] - V[F[:, 0]]), V[F].mean(axis=1) - centers[F[:, 0]])
+    F[out < 0] = F[out < 0][:, ::-1]
+    return V, F
+
+
+def _chain(center, radius, height, count, length, width, wire):
+    """Cadena de eslabones ovalados alrededor de la esfera, en un círculo horizontal a 'height' sobre el centro. Los eslabones
+    se alternan: uno tumbado sobre la superficie y otro de canto."""
+    r = wire / 2
+    rho = math.sqrt(radius ** 2 - height ** 2)
+    a, b = length / 2 - r, width / 2 - r
+    phi = np.linspace(0, 2 * math.pi, 28, endpoint=False)
+    Vs, Fs, off = [], [], 0
+    for i in range(count):
+        th = 2 * math.pi * i / count
+        p = np.array([rho * math.cos(th), height, rho * math.sin(th)])
+        n = p / radius
+        t = np.array([-math.sin(th), 0.0, math.cos(th)])
+        s = np.cross(n, t)
+        if i % 2 == 0:       # tumbado: el óvalo está en el plano (t, s)
+            c = p + n * (r + 0.0005)
+            pts = c + a * np.cos(phi)[:, None] * t + b * np.sin(phi)[:, None] * s
+            V, F = _tube(pts, n, r)
+        else:                # de canto: el óvalo está en el plano (t, n)
+            c = p + n * (b + r + 0.0005)
+            pts = c + a * np.cos(phi)[:, None] * t + b * np.sin(phi)[:, None] * n
+            V, F = _tube(pts, s, r)
+        Vs.append(center + V)
+        Fs.append(F + off)
+        off += len(V)
+    return np.concatenate(Vs), np.concatenate(Fs)
+
+
 def build_reliefs(items, textures, dims):
     """Mallas (en la caja del objeto) de todos los relieves del JSON. 'dims' = (ancho, alto, fondo)."""
     out = []
     for item in items:
-        p = {**DEFAULTS, **item}
+        p = {**KINDS[item["tipo"]], **item}
         radius = float(p["radio_m"])
         center = np.array([dims[0] / 2, radius, dims[2] / 2])
+        if item["tipo"] == "cadena":
+            V, F = _chain(center, radius, float(p["altura_m"]), int(p["eslabones"]), float(p["largo_m"]), float(p["ancho_m"]),
+                          float(p["grosor_m"]))
+            out.append(ReliefMesh(V, F, flat_color(textures[p["textura"]]), center, radius))
+            continue
         sides = (1, -1) if p["simetrica"] else (1,)
         for side in sides:
             V, F = _strip(center, radius, float(p["inclinacion_grados"]), float(p["ancho_m"]), float(p["sobresale_m"]),

@@ -27,7 +27,9 @@ Estructura (todas las medidas en METROS):
     {"tipo": "franja", "textura": "oro", "radio_m": 0.125,      # radio de la esfera (centrada en la caja, apoyada en el suelo)
      "inclinacion_grados": 45, "ancho_m": 0.04, "sobresale_m": 0.012,
      "margen_m": 0.07,                           # altura mínima sobre la línea de corte (deja libre la banda y el botón)
-     "simetrica": true}                          # true = una a cada lado (izquierda y derecha)
+     "simetrica": true},                         # true = una a cada lado (izquierda y derecha)
+    {"tipo": "cadena", "textura": "rojo", "radio_m": 0.125, "altura_m": 0.07,   # anillo de eslabones paralelo a la banda
+     "eslabones": 28, "largo_m": 0.03, "ancho_m": 0.014, "grosor_m": 0.005}
   ],
   "marcas": {
     "corte":     [{"vista": "derecha", "linea": [[0, 0.1], [0.2, 0.1]]}],         # por aquí se abre
@@ -56,7 +58,6 @@ import json
 import re
 from pathlib import Path
 
-from app.shape.geometry.relief import DEFAULTS as RELIEF_DEFAULTS
 from app.shape.geometry.relief import KINDS as RELIEF_KINDS
 from app.shape.rig.skeleton import PALETTE
 
@@ -181,8 +182,12 @@ class ObjectSpec:
                 raise SpecError(f"{where}: «tipo» debe ser: {', '.join(RELIEF_KINDS)}.")
             if r.get("textura") not in self.textures:
                 raise SpecError(f"{where}: la textura {r.get('textura')!r} no existe en «texturas».")
-            for key in ("radio_m", *[k for k in RELIEF_DEFAULTS if k != "simetrica"]):
-                v = r.get(key, RELIEF_DEFAULTS.get(key))
+            if not isinstance(r.get("radio_m"), (int, float)) or r["radio_m"] <= 0:
+                raise SpecError(f"{where}: falta «radio_m» (radio de la esfera en metros).")
+            for key, default in RELIEF_KINDS[r["tipo"]].items():
+                v = r.get(key, default)
+                if isinstance(default, bool):
+                    continue
                 if not isinstance(v, (int, float)) or v <= 0:
                     raise SpecError(f"{where}: «{key}» debe ser un número mayor que 0" + (" (en metros)." if key.endswith("_m") else "."))
 
