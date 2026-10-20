@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import numpy as np
 from PIL import Image, ImageDraw
 
+from app.shape.geometry.relief import view_points, visible_faces
 from app.shape.spec.schema import parse_color
 
 SS = 2   # supermuestreo del dibujo
@@ -155,6 +156,26 @@ def draw_layers(textures, light, layers, frame: Frame):
             e = edge(m, c["borde"].get("grosor_m", 0.001) * frame.k / 2) & sil
             rgb[e] = parse_color(c["borde"].get("color", "#000000"), "borde")
     return rgb, sil
+
+
+def draw_reliefs(meshes, key, dims, frame: Frame):
+    """(máscara, rgb) de los relieves vistos desde la vista 'key': las caras que miran a la cámara, de lejos a cerca, con un
+    poco de sombreado según lo que miran de frente. None si no hay relieves."""
+    if not meshes:
+        return None
+    img, msk = Image.new("RGB", (frame.w, frame.h), (0, 0, 0)), Image.new("L", (frame.w, frame.h), 0)
+    di, dm = ImageDraw.Draw(img), ImageDraw.Draw(msk)
+    for m in meshes:
+        xy, depth = view_points(key, m.V, dims)
+        faces = m.F[visible_faces(m, key)]
+        for f in faces[np.argsort(depth[faces].mean(axis=1))]:
+            pts = [frame.px(xy[i]) for i in f]
+            n = np.cross(m.V[f[1]] - m.V[f[0]], m.V[f[2]] - m.V[f[0]])
+            shade = 0.72 + 0.28 * min(1.0, abs(n[{"front": 2, "back": 2, "right": 0, "left": 0, "top": 1, "bottom": 1}[key]]) / (np.linalg.norm(n) + 1e-12))
+            di.polygon(pts, fill=tuple(int(c * shade) for c in m.color))
+            dm.polygon(pts, fill=255)
+    mask = np.asarray(msk) > 127
+    return (mask, np.asarray(img).astype(np.float32)) if mask.any() else None
 
 
 def downsample(rgb, alpha, ss=SS):

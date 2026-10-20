@@ -10,6 +10,7 @@ from app.shape.geometry.mesh_ops import build_attributes, crease_normals, is_wat
 from app.shape.geometry.opening import find_opening
 from app.shape.geometry.primitive import fit_primitive, is_round, primitive_mesh
 from app.shape.geometry.protrusion import build_extras, fit_core
+from app.shape.geometry.relief import to_extras
 from app.shape.geometry.qem import decimate
 from app.shape.geometry.surface_nets import surface_nets
 from app.shape.model import Model, Part
@@ -68,6 +69,13 @@ def generate_shape(bp: Blueprint, progress=None) -> ShapeResult:
     skeleton = _skeleton(marks.joints, masks, dims, flips, (mw, mh, md), warnings)
     low_shape, _ = grid_shape(dims, 40)
     primitive, iou = fit_primitive(make_arrays(masks, low_shape), low_shape, flips)
+
+    if bp.reliefs:                              # cuerpo esférico + relieves calculados desde el JSON (no desde las siluetas)
+        core = fit_core(masks, dims, flips)
+        if core is not None:
+            return _ellipsoid(masks, images, dims, flips, mh, opening, core["inliers"], marks, metric, warnings, progress,
+                              t0, interior, core, None, skeleton, to_extras(bp.reliefs, (mw, mh, md), mh))
+        warnings.append("No se pudo ajustar el cuerpo esférico de las vistas: los relieves se ignoran.")
 
     if is_ellipsoid(primitive):
         return _ellipsoid(masks, images, dims, flips, mh, opening, iou, marks, metric, warnings, progress, t0, interior,
@@ -195,7 +203,7 @@ def _build_parts(V, F, opening, atlas, crease):
 
 
 def _ellipsoid(masks, images, dims, flips, height_m, opening, iou, marks, metric, warnings, progress, t0, interior=None,
-               core=None, fp_masks=None, skeleton=None):
+               core=None, fp_masks=None, skeleton=None, relief_extras=None):
     """Esfera o elipsoide: el cuerpo es solo una descripción paramétrica + textura. Si 'core' (cuerpo ajustado sin los
     salientes) viene dado, lo que sobresale se genera aparte como malla y viaja con su pieza al abrirse."""
     w, _, d = dims
@@ -205,8 +213,8 @@ def _ellipsoid(masks, images, dims, flips, height_m, opening, iou, marks, metric
 
     invoke_progress(progress, 0.3, "Pintando la textura...")
     texture = bake_equirect(images, masks, ext, flips, frames=None if core is None else core["frames"])
-    extras = None
-    if core is not None:
+    extras = relief_extras
+    if core is not None and relief_extras is None:
         invoke_progress(progress, 0.45, "Generando los salientes...")
         extras = build_extras(masks, images, fp_masks, tuple(box), flips, core)
         if extras is None:

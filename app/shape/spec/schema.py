@@ -23,6 +23,12 @@ Estructura (todas las medidas en METROS):
         {"textura": "rojo", "forma": "circulo", "centro": [0.1, 0.1], "radio": 0.1, "silueta": true, "sombrear": true}
     ]}
   },
+  "relieves": [                                   # (opcional) piezas que sobresalen de un cuerpo esférico y siguen su curvatura
+    {"tipo": "franja", "textura": "oro", "radio_m": 0.125,      # radio de la esfera (centrada en la caja, apoyada en el suelo)
+     "inclinacion_grados": 45, "ancho_m": 0.04, "sobresale_m": 0.012,
+     "margen_m": 0.07,                           # altura mínima sobre la línea de corte (deja libre la banda y el botón)
+     "simetrica": true}                          # true = una a cada lado (izquierda y derecha)
+  ],
   "marcas": {
     "corte":     [{"vista": "derecha", "linea": [[0, 0.1], [0.2, 0.1]]}],         # por aquí se abre
     "mueve":     [{"vista": "derecha", "punto": [0.1, 0.15]}],                     # (opcional) lado que se mueve
@@ -50,6 +56,8 @@ import json
 import re
 from pathlib import Path
 
+from app.shape.geometry.relief import DEFAULTS as RELIEF_DEFAULTS
+from app.shape.geometry.relief import KINDS as RELIEF_KINDS
 from app.shape.rig.skeleton import PALETTE
 
 FORMAT = "janus.objeto/1"
@@ -125,6 +133,8 @@ class ObjectSpec:
             self._check_layers(view.get("capas"), f"vistas.{key}", silhouette=True)
         if "frente" not in self.views or not ({"izquierda", "derecha"} & set(self.views)):
             raise SpecError("Hacen falta al menos la vista «frente» y una lateral («izquierda» o «derecha»).")
+        self.reliefs = data.get("relieves") or []
+        self._check_reliefs()
         self.marks = data.get("marcas") or {}
         self.interior = data.get("interior") or {}
         for key, block in self.interior.items():
@@ -161,6 +171,20 @@ class ObjectSpec:
         else:
             parse_point(c.get("esquina"), w + ".esquina")
             parse_point(c.get("tamano"), w + ".tamano")
+
+    def _check_reliefs(self):
+        if not isinstance(self.reliefs, list):
+            raise SpecError("«relieves» debe ser una lista.")
+        for i, r in enumerate(self.reliefs):
+            where = f"relieves[{i}]"
+            if r.get("tipo") not in RELIEF_KINDS:
+                raise SpecError(f"{where}: «tipo» debe ser: {', '.join(RELIEF_KINDS)}.")
+            if r.get("textura") not in self.textures:
+                raise SpecError(f"{where}: la textura {r.get('textura')!r} no existe en «texturas».")
+            for key in ("radio_m", *[k for k in RELIEF_DEFAULTS if k != "simetrica"]):
+                v = r.get(key, RELIEF_DEFAULTS.get(key))
+                if not isinstance(v, (int, float)) or v <= 0:
+                    raise SpecError(f"{where}: «{key}» debe ser un número mayor que 0" + (" (en metros)." if key.endswith("_m") else "."))
 
     def _check_marks(self):
         for kind in MARK_KINDS:

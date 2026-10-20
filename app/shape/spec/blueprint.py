@@ -3,8 +3,9 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from app.shape.geometry.relief import build_reliefs
 from app.shape.spec.marks import Marks
-from app.shape.spec.raster import SS, Frame, downsample, draw_layers, edge, shape_mask
+from app.shape.spec.raster import SS, Frame, downsample, draw_layers, draw_reliefs, edge, shape_mask
 from app.shape.spec.schema import INTERIOR_KEYS, VIEW_KEYS, ObjectSpec, parse_color, parse_point
 from app.utils.pool_util import parallel_dict
 
@@ -27,13 +28,22 @@ class Blueprint:
     marks: Marks
     interiors: dict                              # {'movable'|'fixed': RGBA uint8}
     warnings: list = field(default_factory=list)
+    reliefs: list = field(default_factory=list)  # mallas de los relieves (geometry.relief.ReliefMesh)
 
 
-def _view(spec: ObjectSpec, name):
+def _view(spec: ObjectSpec, name, reliefs=()):
     """(View recortada al cuadro, avisos) de una vista descrita en el JSON."""
     w, h = spec.size(name)
     frame = Frame.around(w, h, MARGIN, spec.ppm)
     rgb, sil = draw_layers(spec.textures, spec.light, spec.views[name]["capas"], frame)
+    outline = parse_color(spec.outline.get("color", "#1c1c22"), "contorno") if spec.outline else None
+    rel = draw_reliefs(reliefs, VIEW_KEYS[name], (spec.width, spec.height, spec.depth), frame)
+    if rel is not None:
+        mask_r, rgb_r = rel
+        rgb[mask_r] = rgb_r[mask_r]
+        sil = sil | mask_r
+        if outline:
+            rgb[edge(mask_r, spec.outline.get("grosor_m", 0.0015) * frame.k / 2) & mask_r] = outline
     if spec.outline:
         rgb[edge(sil, spec.outline.get("grosor_m", 0.0015) * frame.k / 2) & sil] = parse_color(spec.outline.get("color", "#1c1c22"), "contorno")
     rgba = downsample(rgb, sil)
@@ -97,7 +107,8 @@ def read_marks(spec: ObjectSpec) -> Marks:
 
 def build_blueprint(spec: ObjectSpec) -> Blueprint:
     """Calcula (en paralelo) las siluetas con su color, las huellas de salientes y las texturas interiores del JSON."""
-    tasks = {("view", v): (lambda v=v: _view(spec, v)) for v in spec.views}
+    reliefs = build_reliefs(spec.reliefs, spec.textures, (spec.width, spec.height, spec.depth)) if spec.reliefs else []
+    tasks = {("view", v): (lambda v=v: _view(spec, v, reliefs)) for v in spec.views}
     by_view = {}
     for item in spec.marks.get("salientes", []):
         by_view.setdefault(item["vista"], []).append(item)
@@ -114,4 +125,4 @@ def build_blueprint(spec: ObjectSpec) -> Blueprint:
         elif kind == "foot":
             marks.footprints[VIEW_KEYS[name]] = value
     interiors = {INTERIOR_KEYS[k]: done[("int", k)] for k in spec.interior}
-    return Blueprint(spec.name, (spec.width, spec.height, spec.depth), views, marks, interiors, warnings)
+    return Blueprint(spec.name, (spec.width, spec.height, spec.depth), views, marks, interiors, warnings, reliefs)
