@@ -156,7 +156,7 @@ def band_by(spec, kind, color=None):
     y0 = (h / 2 + 0.0003) / (1 + h / (2 * R))
     ring_eq = math.sqrt(R * R - y0 * y0)
     rho = rb + h / 2
-    hole = r5(_chord(R, rho + h / 2) * 0.97)
+    hole = r5(_chord(R, rho + h / 2) * 0.9)
     eq = {"tipo": kind, "textura": name, "radio_m": r5(R), "eje": [0, 1, 0], "radio_aro_m": r5(ring_eq), **_rope_params(R, h, kind, ring_eq),
           "hueco": {"eje": [0, 0, 1], "radio_m": hole}}
     bt = {"tipo": kind, "textura": name, "radio_m": r5(R), "eje": [0, 0, 1], "radio_aro_m": r5(rho), **_rope_params(R, h, kind, rho)}
