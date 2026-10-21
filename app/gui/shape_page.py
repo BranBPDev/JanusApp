@@ -1,13 +1,15 @@
+import json
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import Qt, QUrl, Signal
+from PySide6.QtCore import Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QImage, QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup, QCheckBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QProgressBar, QPushButton, QSlider,
     QVBoxLayout, QWidget,
 )
 
+from app.gui.ai_chat import AiChatPanel
 from app.gui.viewer import MeshViewer
 from app.managers.shape_manager import PreviewWorker, ShapeWorker
 from app.shape.storage.project import load_project_source
@@ -79,6 +81,10 @@ class ShapePage(QWidget):
         self.new_btn.clicked.connect(self.new_project)
         self.new_btn.hide()
         buttons.addWidget(self.new_btn)
+        self.ai_btn = QPushButton("Asistente IA")
+        self.ai_btn.setCheckable(True)
+        self.ai_btn.setToolTip("Chat con una IA local que genera y modifica el JSON.")
+        buttons.addWidget(self.ai_btn)
         lay.addLayout(buttons)
         self.summary = QLabel("Ningún objeto cargado.", objectName="Muted", wordWrap=True)
         lay.addWidget(self.summary)
@@ -193,7 +199,31 @@ class ShapePage(QWidget):
         self.warn.hide()
         right.addWidget(self.info)
         right.addWidget(self.warn)
+        root.addWidget(panel_ai := self._build_ai())
         root.addLayout(right, 1)
+        self.ai_btn.toggled.connect(panel_ai.setVisible)
+
+    # ---------- Asistente IA ----------
+    def _build_ai(self):
+        self.ai = AiChatPanel(self._current_dict)
+        self.ai.spec_changed.connect(self._on_ai_spec)
+        self.ai.setFixedWidth(380)
+        self.ai.hide()
+        return self.ai
+
+    def _current_dict(self) -> dict:
+        try:
+            return json.loads(self.spec_text) if self.spec_text else {}
+        except Exception:
+            return {}
+
+    def _on_ai_spec(self, text):
+        if self._busy():
+            QTimer.singleShot(300, lambda: self._on_ai_spec(text))
+            return
+        self._reset_result()
+        self._set_spec(text, None)
+        self.ai.refresh()
 
     # ---------- JSON y vista previa ----------
     def _busy(self) -> bool:

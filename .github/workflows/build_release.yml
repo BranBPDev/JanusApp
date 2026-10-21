@@ -1,79 +1,47 @@
-name: Build and Release JanusApp
-
+name: Build Release
 on:
   push:
-    branches: [ main ]
-    paths-ignore:
-      - 'testing/**'
-      - '**.md'
-
+    tags: ["v*"]
+  workflow_dispatch:
 permissions:
   contents: write
-
-concurrency:
-  group: release
-  cancel-in-progress: true
-
+env:
+  MODEL_URL: https://huggingface.co/bartowski/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/main/Qwen2.5-Coder-1.5B-Instruct-Q8_0.gguf
+  MODEL_FILE: Qwen2.5-Coder-1.5B-Instruct-Q8_0.gguf
 jobs:
   build:
     runs-on: windows-latest
-
     steps:
-      - name: 📥 Checkout Código
-        uses: actions/checkout@v4
-
-      - name: 🐍 Configurar Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
           cache: pip
-
-      - name: 📦 Instalar Dependencias
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: 🏷️ Extraer Configuración del Release
+      - run: pip install -r requirements.txt pyinstaller
+      - run: pyinstaller JanusApp.spec
+      - name: Zip ligero
         shell: pwsh
-        run: |
-          $json = Get-Content version.json -Raw | ConvertFrom-Json
-          $c = $json.configs
-          @(
-            "TAG=$($c.tag)",
-            "REL_NAME=$($c.name)",
-            "DESC=$($c.description)",
-            "PRE=$($c.prerelease.ToString().ToLower())",
-            "LATEST=$($c.make_latest.ToString().ToLower())"
-          ) | Add-Content -Path $env:GITHUB_ENV
-
-          # version.json limpio (solo 'userjson') para el usuario
-          $json.userjson | ConvertTo-Json | Out-File "version.json" -Encoding utf8
-          Write-Host "[LOG] Release $($c.tag) configurado."
-
-      - name: 🔨 Compilar EXE (PyInstaller)
-        run: pyinstaller --clean --noconfirm JanusApp.spec
-
-      - name: 🗂️ Preparar ZIP Final
-        shell: pwsh
-        run: |
-          $out = "release_build"
-          New-Item -ItemType Directory -Force -Path "$out/app/data" | Out-Null
-          Copy-Item -Path "dist/JanusApp.exe" -Destination $out -Force
-          Copy-Item -Path "version.json" -Destination "$out/app/data/version.json"
-          # El .exe ya está comprimido por PyInstaller: sin compresión extra el zip se crea y descomprime mucho más rápido.
-          Compress-Archive -Path "$out/*" -DestinationPath "JanusApp.zip" -CompressionLevel NoCompression -Force
-
-      - name: 🚀 Publicar en GitHub
-        uses: softprops/action-gh-release@v2
+        run: Compress-Archive -Path dist/JanusApp/* -DestinationPath JanusApp.zip -CompressionLevel NoCompression
+      - name: Cache modelo
+        uses: actions/cache@v4
         with:
-          tag_name: ${{ env.TAG }}
-          name: ${{ env.REL_NAME }}
-          body: ${{ env.DESC }}
-          prerelease: ${{ env.PRE == 'true' }}
-          make_latest: ${{ env.LATEST == 'true' }}
+          path: ${{ env.MODEL_FILE }}
+          key: model-${{ env.MODEL_FILE }}
+      - name: Descargar modelo
+        shell: pwsh
+        run: |
+          if (-not (Test-Path $env:MODEL_FILE)) { curl.exe -L --fail --retry 5 -o $env:MODEL_FILE $env:MODEL_URL }
+          $b = [System.IO.File]::ReadAllBytes($env:MODEL_FILE)[0..3]
+          if ([System.Text.Encoding]::ASCII.GetString($b) -ne "GGUF") { throw "Modelo no es GGUF" }
+      - name: Zip completo (con modelo)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist/JanusApp/app/models/ia | Out-Null
+          Copy-Item $env:MODEL_FILE dist/JanusApp/app/models/ia/
+          7z a -tzip -mx=0 JanusApp-Completo.zip ./dist/JanusApp/*
+      - uses: softprops/action-gh-release@v2
+        with:
           files: |
             JanusApp.zip
+            JanusApp-Completo.zip
             version.json
-          overwrite: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -12,7 +12,18 @@ KINDS = {   # tipo -> parámetros (además de 'textura' y 'radio_m') con su valo
     "franja": {"inclinacion_grados": 45.0, "ancho_m": 0.04, "sobresale_m": 0.01, "margen_m": 0.05, "simetrica": True},
     "cadena": {"eje": [0.0, 1.0, 0.0], "radio_aro_m": 0.1, "eslabones": 24, "largo_m": 0.04, "ancho_m": 0.018, "grosor_m": 0.006,
                "hueco": None},
+    "cuerda": {"eje": [0.0, 1.0, 0.0], "radio_aro_m": 0.1, "hebras": 3, "vueltas": 24, "grosor_m": 0.012, "hueco": None},
+    "trazo": {"curvas": [], "lat_grados": 90.0, "lon_grados": 0.0, "giro_grados": 0.0, "ancho_m": 0.008, "sobresale_m": 0.006,
+              "copias": 1, "paso_grados": 0.0},
+    "pieza": {"forma": "esfera", "lat_grados": 0.0, "lon_grados": 0.0, "tamano_m": [0.03, 0.03, 0.02], "giro_grados": 0.0,
+              "hunde_m": 0.003, "copias": 1, "paso_grados": 0.0},
+    "malla": {"vertices": [], "caras": [], "lat_grados": 0.0, "lon_grados": 0.0, "giro_grados": 0.0, "hunde_m": 0.003,
+              "copias": 1, "paso_grados": 0.0},
 }
+PIECE_FORMS = ("esfera", "elipsoide", "caja", "cilindro", "cono", "toro")
+SIGNED = {"lat_grados", "lon_grados", "giro_grados", "paso_grados", "hunde_m"}
+MAX_CURVES, MAX_POINTS = 24, 400   # pueden ser 0 o negativos
+MAX_MESH = 4000
 EMBED = 0.003        # lo que se hunde la base de la pieza dentro del cuerpo para que no quede rendija
 ALONG, ACROSS = 64, 9
 TUBE_SIDES, LINK_SAMPLES = 6, 18      # detalle de cada eslabón (pocos triángulos: una cadena tiene cientos)
@@ -158,6 +169,215 @@ def _chain(center, radius, axis, ring, count, length, width, wire, hole=None):
     return np.concatenate(Vs), np.concatenate(Fs)
 
 
+def _tube_open(points, ref, radius, sides=6):
+    """Tubo de sección circular a lo largo de una curva abierta (n, 3); 'ref' (n, 3) orienta la sección; con tapas en los extremos."""
+    n = len(points)
+    t = np.gradient(points, axis=0)
+    t /= np.maximum(np.linalg.norm(t, axis=1, keepdims=True), 1e-12)
+    u = ref - np.einsum("ij,ij->i", ref, t)[:, None] * t
+    u /= np.maximum(np.linalg.norm(u, axis=1, keepdims=True), 1e-12)
+    w = np.cross(t, u)
+    ang = np.linspace(0, 2 * math.pi, sides, endpoint=False)
+    ring = np.cos(ang)[None, :, None] * u[:, None, :] + np.sin(ang)[None, :, None] * w[:, None, :]
+    V = np.concatenate([(points[:, None, :] + radius * ring).reshape(-1, 3), points[:1], points[-1:]])
+    F = []
+    for i in range(n - 1):
+        for k in range(sides):
+            a, b = i * sides + k, i * sides + (k + 1) % sides
+            c, d = (i + 1) * sides + (k + 1) % sides, (i + 1) * sides + k
+            F += [(a, b, c), (a, c, d)]
+    c0, c1 = n * sides, n * sides + 1
+    F += [(c0, (k + 1) % sides, k) for k in range(sides)]
+    F += [(c1, (n - 1) * sides + k, (n - 1) * sides + (k + 1) % sides) for k in range(sides)]
+    F = np.array(F, np.int64)
+    centers = np.concatenate([np.repeat(points, sides, axis=0), points[:1], points[-1:]])
+    out = np.einsum("ij,ij->i", np.cross(V[F[:, 1]] - V[F[:, 0]], V[F[:, 2]] - V[F[:, 0]]), V[F].mean(axis=1) - centers[F[:, 0]])
+    F[out < 0] = F[out < 0][:, ::-1]
+    return V, F
+
+
+def _rope(center, radius, axis, ring, strands, turns, wire, hole=None):
+    """Cuerda: 'strands' hebras que se trenzan 'turns' veces (por vuelta completa) a lo largo del círculo de radio 'ring' perpendicular
+    a 'axis'. Con 'hole' = (punto de la esfera, distancia) queda abierta: va de un borde del hueco al otro."""
+    axis = _unit(axis)
+    helper = np.array([0.0, 1.0, 0.0]) if abs(axis[1]) < 0.9 else np.array([1.0, 0.0, 0.0])
+    u = _unit(np.cross(axis, helper))
+    v = np.cross(axis, u)
+    base = axis * math.sqrt(radius ** 2 - ring ** 2)
+    start, span = 0.0, 2 * math.pi
+    if hole is not None:
+        grid = np.linspace(0, 2 * math.pi, 4096, endpoint=False)
+        pts = base + ring * (np.cos(grid)[:, None] * u + np.sin(grid)[:, None] * v)
+        free = np.linalg.norm(pts - hole[0], axis=1) >= hole[1]
+        if free.any() and not free.all():
+            first = int(np.argmax(free & ~np.roll(free, 1)))
+            free = np.roll(free, -first)
+            start, span = grid[first], np.nonzero(free)[0].max() * (grid[1] - grid[0])
+        else:
+            hole = None
+    closed = hole is None
+    n_pts = max(24, int(turns * 8 * span / (2 * math.pi)))
+    th = start + np.linspace(0, span, n_pts, endpoint=not closed)
+    p = base + ring * (np.cos(th)[:, None] * u + np.sin(th)[:, None] * v)
+    nrm = p / radius
+    rs, e = wire / 4, wire / 4
+    Vs, Fs, off = [], [], 0
+    for k in range(strands):
+        ph = turns * th + 2 * math.pi * k / strands
+        c = p + nrm * (wire / 2 + 0.0005) + e * (np.cos(ph)[:, None] * nrm + np.sin(ph)[:, None] * axis)
+        V, F = _tube(c, axis, rs, 5) if closed else _tube_open(c, nrm, rs, 5)
+        Vs.append(center + V)
+        Fs.append(F + off)
+        off += len(V)
+    return np.concatenate(Vs), np.concatenate(Fs)
+
+
+def _smooth(pts, per=6):
+    """Curva suave (Catmull-Rom) que pasa por los puntos (n, 2)."""
+    pts = np.asarray(pts, np.float64)
+    if len(pts) < 3:
+        return pts
+    ext = np.vstack([2 * pts[0] - pts[1], pts, 2 * pts[-1] - pts[-2]])
+    out = []
+    for i in range(1, len(ext) - 2):
+        p0, p1, p2, p3 = ext[i - 1], ext[i], ext[i + 1], ext[i + 2]
+        for t in np.linspace(0, 1, per, endpoint=False):
+            out.append(0.5 * (2 * p1 + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t ** 2 + (-p0 + 3 * p1 - 3 * p2 + p3) * t ** 3))
+    out.append(pts[-1])
+    return np.array(out)
+
+
+def _traces(center, radius, p):
+    """Trazos: curvas dadas en el plano tangente (metros, medidos sobre la esfera desde el punto lat/lon) que se pegan a la esfera
+    con su ancho y altura. Cada copia gira alrededor del punto 'paso_grados'."""
+    copies = int(p.get("copias", 1))
+    step = float(p.get("paso_grados") or 360.0 / copies)
+    width, rise = float(p["ancho_m"]), float(p["sobresale_m"])
+    r = width / 2
+    Vs, Fs, off = [], [], 0
+    for k in range(copies):
+        e, t, n = _frame(float(p["lat_grados"]), float(p["lon_grados"]), float(p["giro_grados"]) + step * k)
+        for curve in p["curvas"]:
+            c2 = _smooth(curve)
+            d = np.linalg.norm(c2, axis=1)
+            ang = d / radius
+            dirv = np.where(d[:, None] > 1e-12, c2 / np.maximum(d[:, None], 1e-12), 0.0)
+            tang = dirv[:, 0:1] * e + dirv[:, 1:2] * t
+            on = np.cos(ang)[:, None] * n + np.sin(ang)[:, None] * tang           # dirección desde el centro de la esfera
+            on /= np.linalg.norm(on, axis=1, keepdims=True)
+            pts = center + on * (radius + rise - r)
+            V, F = _tube_open(pts, on, r, 8)
+            Vs.append(V)
+            Fs.append(F + off)
+            off += len(V)
+    return np.concatenate(Vs), np.concatenate(Fs)
+
+
+def _closed_primitive(kind):
+    """Malla cerrada unitaria (caja de lado 1 centrada en el origen) de una forma; caras con la normal hacia fuera."""
+    if kind in ("esfera", "elipsoide"):
+        nu, nv = 14, 8
+        V = [(0, 0, -0.5)]
+        for j in range(1, nv):
+            ph = math.pi * j / nv
+            for i in range(nu):
+                a = 2 * math.pi * i / nu
+                V.append((0.5 * math.sin(ph) * math.cos(a), 0.5 * math.sin(ph) * math.sin(a), -0.5 * math.cos(ph)))
+        V.append((0, 0, 0.5))
+        F = [(0, 1 + (i + 1) % nu, 1 + i) for i in range(nu)]
+        for j in range(nv - 2):
+            for i in range(nu):
+                a, b = 1 + j * nu + i, 1 + j * nu + (i + 1) % nu
+                F += [(a, b, b + nu), (a, b + nu, a + nu)]
+        last = len(V) - 1
+        F += [(last, last - nu + i, last - nu + (i + 1) % nu) for i in range(nu)]
+    elif kind == "caja":
+        V = [(x, y, z) for x in (-.5, .5) for y in (-.5, .5) for z in (-.5, .5)]
+        F = [(0, 1, 3), (0, 3, 2), (4, 6, 7), (4, 7, 5), (0, 4, 5), (0, 5, 1), (2, 3, 7), (2, 7, 6), (0, 2, 6), (0, 6, 4), (1, 5, 7), (1, 7, 3)]
+    elif kind in ("cilindro", "cono"):
+        n = 18
+        ang = [2 * math.pi * i / n for i in range(n)]
+        top_r = 0.5 if kind == "cilindro" else 0.0
+        V = [(0.5 * math.cos(a), 0.5 * math.sin(a), -0.5) for a in ang]
+        if kind == "cilindro":
+            V += [(top_r * math.cos(a), top_r * math.sin(a), 0.5) for a in ang]
+        V += [(0, 0, -0.5), (0, 0, 0.5)]
+        cb, ct = len(V) - 2, len(V) - 1
+        F = [(cb, (i + 1) % n, i) for i in range(n)]
+        if kind == "cilindro":
+            F += [(ct, n + i, n + (i + 1) % n) for i in range(n)]
+            for i in range(n):
+                j = (i + 1) % n
+                F += [(i, j, n + j), (i, n + j, n + i)]
+        else:
+            F += [(i, (i + 1) % n, ct) for i in range(n)]
+    else:   # toro: aro de diámetro 1 en el plano XY, grosor = 'tamano z'
+        nu, nv, minor = 20, 8, 0.25
+        V = []
+        for i in range(nu):
+            a = 2 * math.pi * i / nu
+            for j in range(nv):
+                b = 2 * math.pi * j / nv
+                rr = 0.5 - minor + minor * math.cos(b)
+                V.append((rr * math.cos(a), rr * math.sin(a), 0.5 * math.sin(b)))
+        F = []
+        for i in range(nu):
+            for j in range(nv):
+                a_, b_ = i * nv + j, i * nv + (j + 1) % nv
+                c_, d_ = ((i + 1) % nu) * nv + (j + 1) % nv, ((i + 1) % nu) * nv + j
+                F += [(a_, b_, c_), (a_, c_, d_)]
+    V, F = np.array(V, np.float64), np.array(F, np.int64)
+    if _volume(V, F) < 0:
+        F = F[:, ::-1]
+    return V, F
+
+
+def _volume(V, F):
+    return float(np.einsum("ij,ij->i", V[F[:, 0]], np.cross(V[F[:, 1]], V[F[:, 2]])).sum() / 6)
+
+
+def _frame(lat, lon, twist):
+    """Ejes locales sobre la esfera: este (e), norte (t) y hacia fuera (n); lon = 0 mira al frente (+z) y crece hacia +x."""
+    la, lo = math.radians(lat), math.radians(lon)
+    n = np.array([math.cos(la) * math.sin(lo), math.sin(la), math.cos(la) * math.cos(lo)])
+    e = np.array([n[2], 0.0, -n[0]])
+    e = np.array([1.0, 0.0, 0.0]) if np.linalg.norm(e) < 1e-6 else e / np.linalg.norm(e)
+    t = np.cross(n, e)
+    c, s = math.cos(math.radians(twist)), math.sin(math.radians(twist))
+    return c * e + s * t, -s * e + c * t, n
+
+
+def _placed(local_v, F, center, radius, lat, lon, twist, sink, lift):
+    """Pieza dada en ejes locales (este, norte, fuera) -> caja del objeto; 'lift' = altura del centro sobre la superficie."""
+    e, t, n = _frame(lat, lon, twist)
+    origin = center + n * (radius + lift - sink)
+    V = origin + local_v[:, 0:1] * e + local_v[:, 1:2] * t + local_v[:, 2:3] * n
+    return V, F
+
+
+def _pieces(center, radius, p):
+    """Una o varias copias (alrededor del eje vertical, cada 'paso_grados') de una pieza o malla propia sobre la esfera."""
+    copies = int(p.get("copias", 1))
+    step = float(p.get("paso_grados") or 360.0 / copies)
+    out_v, out_f, off = [], [], 0
+    for k in range(copies):
+        lon = float(p["lon_grados"]) + step * k
+        if p["tipo"] == "malla":
+            lv, F = np.array(p["vertices"], np.float64), np.array(p["caras"], np.int64)
+            if _volume(lv, F) < 0:
+                F = F[:, ::-1]
+            V, F = _placed(lv, F, center, radius, float(p["lat_grados"]), lon, float(p["giro_grados"]), float(p["hunde_m"]), 0.0)
+        else:
+            size = np.array(p["tamano_m"], np.float64)
+            u, F = _closed_primitive(p["forma"])
+            V, F = _placed(u * size, F, center, radius, float(p["lat_grados"]), lon, float(p["giro_grados"]),
+                           float(p["hunde_m"]), size[2] / 2)
+        out_v.append(V)
+        out_f.append(F + off)
+        off += len(V)
+    return np.concatenate(out_v), np.concatenate(out_f)
+
+
 def build_reliefs(items, textures, dims):
     """Mallas (en la caja del objeto) de todos los relieves del JSON. 'dims' = (ancho, alto, fondo)."""
     out = []
@@ -169,6 +389,19 @@ def build_reliefs(items, textures, dims):
             hole = None if not p.get("hueco") else (_unit(p["hueco"]["eje"]) * radius, float(p["hueco"]["radio_m"]))
             V, F = _chain(center, radius, p["eje"], float(p["radio_aro_m"]), int(p["eslabones"]), float(p["largo_m"]),
                           float(p["ancho_m"]), float(p["grosor_m"]), hole)
+            out.append(ReliefMesh(V, F, flat_color(textures[p["textura"]]), center, radius))
+            continue
+        if item["tipo"] == "cuerda":
+            hole = None if not p.get("hueco") else (_unit(p["hueco"]["eje"]) * radius, float(p["hueco"]["radio_m"]))
+            V, F = _rope(center, radius, p["eje"], float(p["radio_aro_m"]), int(p["hebras"]), int(p["vueltas"]), float(p["grosor_m"]), hole)
+            out.append(ReliefMesh(V, F, flat_color(textures[p["textura"]]), center, radius))
+            continue
+        if item["tipo"] == "trazo":
+            V, F = _traces(center, radius, p)
+            out.append(ReliefMesh(V, F, flat_color(textures[p["textura"]]), center, radius))
+            continue
+        if item["tipo"] in ("pieza", "malla"):
+            V, F = _pieces(center, radius, p)
             out.append(ReliefMesh(V, F, flat_color(textures[p["textura"]]), center, radius))
             continue
         sides = (1, -1) if p["simetrica"] else (1,)

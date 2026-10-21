@@ -31,7 +31,15 @@ Estructura (todas las medidas en METROS):
     {"tipo": "cadena", "textura": "rojo", "radio_m": 0.125,     # anillo de eslabones alrededor de la esfera
      "eje": [0, 1, 0], "radio_aro_m": 0.1,       # círculo perpendicular a ese eje (aquí, horizontal) y su radio
      "eslabones": 24, "largo_m": 0.04, "ancho_m": 0.018, "grosor_m": 0.006,
-     "hueco": {"eje": [0, 0, 1], "radio_m": 0.06}}      # (opcional) sin eslabones cerca de ese punto de la esfera
+     "hueco": {"eje": [0, 0, 1], "radio_m": 0.06}},     # (opcional) sin eslabones cerca de ese punto de la esfera
+    {"tipo": "cuerda", "textura": "rojo", "radio_m": 0.125, "eje": [0, 1, 0], "radio_aro_m": 0.1, "hebras": 3, "vueltas": 24, "grosor_m": 0.012},
+    {"tipo": "pieza", "textura": "oro", "radio_m": 0.125, "forma": "cono",    # esfera|elipsoide|caja|cilindro|cono|toro posada en la esfera
+     "lat_grados": 30, "lon_grados": 0, "tamano_m": [0.03, 0.03, 0.04],     # lat/lon: dónde (lon 0 = frente); tamaño [este, norte, altura]
+     "giro_grados": 0, "hunde_m": 0.003, "copias": 6, "paso_grados": 60},   # copias repartidas cada «paso_grados» alrededor del eje vertical
+    {"tipo": "trazo", "textura": "oro", "radio_m": 0.125, "lat_grados": 90, "lon_grados": 0,    # línea en relieve que sigue la esfera: curvas con puntos [x, y]
+     "curvas": [[[0, 0], [0.02, 0.01], [0.03, 0.03]]], "ancho_m": 0.008, "sobresale_m": 0.006, "copias": 3},   # medidos desde ese punto sobre la esfera; 3 copias a 120°
+    {"tipo": "malla", "textura": "oro", "radio_m": 0.125, "lat_grados": 0, "lon_grados": 90,    # pieza propia: puntos [este, norte, fuera] en m
+     "vertices": [[-0.01, -0.01, 0], [0.01, -0.01, 0], [0, 0.01, 0], [0, 0, 0.02]], "caras": [[0, 2, 1], [0, 1, 3], [1, 2, 3], [2, 0, 3]]}
   ],
   "marcas": {
     "corte":     [{"vista": "derecha", "linea": [[0, 0.1], [0.2, 0.1]]}],         # por aquí se abre
@@ -60,7 +68,7 @@ import json
 import re
 from pathlib import Path
 
-from app.shape.geometry.relief import KINDS as RELIEF_KINDS
+from app.shape.geometry.relief import KINDS as RELIEF_KINDS, MAX_CURVES, MAX_MESH, MAX_POINTS, PIECE_FORMS, SIGNED
 from app.shape.rig.skeleton import PALETTE
 
 FORMAT = "janus.objeto/1"
@@ -188,12 +196,41 @@ class ObjectSpec:
                 raise SpecError(f"{where}: falta «radio_m» (radio de la esfera en metros).")
             for key, default in RELIEF_KINDS[r["tipo"]].items():
                 v = r.get(key, default)
-                if isinstance(default, (bool, list, type(None))):
+                if isinstance(default, (bool, list, str, type(None))):
                     continue
-                if not isinstance(v, (int, float)) or v <= 0:
+                if key in SIGNED:
+                    if isinstance(v, bool) or not isinstance(v, (int, float)):
+                        raise SpecError(f"{where}: «{key}» debe ser un número.")
+                elif not isinstance(v, (int, float)) or isinstance(v, bool) or v <= 0:
                     raise SpecError(f"{where}: «{key}» debe ser un número mayor que 0" + (" (en metros)." if key.endswith("_m") else "."))
-            if r["tipo"] == "cadena":
+            if r["tipo"] in ("cadena", "cuerda"):
                 self._check_chain(r, where)
+            elif r["tipo"] == "pieza":
+                if r.get("forma", "esfera") not in PIECE_FORMS:
+                    raise SpecError(f"{where}: «forma» debe ser: {', '.join(PIECE_FORMS)}.")
+                s = r.get("tamano_m", [0.03, 0.03, 0.02])
+                if not (isinstance(s, list) and len(s) == 3 and all(isinstance(c, (int, float)) and not isinstance(c, bool) and c > 0 for c in s)):
+                    raise SpecError(f"{where}: «tamano_m» debe ser [este-oeste, norte-sur, altura] en metros, todos mayores que 0.")
+                if r.get("copias", 1) > 200 or int(r.get("copias", 1)) != r.get("copias", 1):
+                    raise SpecError(f"{where}: «copias» debe ser un entero de 1 a 200.")
+            elif r["tipo"] == "trazo":
+                cv = r.get("curvas")
+                ok = isinstance(cv, list) and 1 <= len(cv) <= MAX_CURVES and all(
+                    isinstance(c, list) and 2 <= len(c) <= MAX_POINTS and all(
+                        isinstance(q, list) and len(q) == 2 and all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in q) for q in c)
+                    for c in cv)
+                if not ok:
+                    raise SpecError(f"{where}: «curvas» debe ser una lista de 1 a {MAX_CURVES} curvas, cada una con 2 a {MAX_POINTS} puntos [x, y] en metros.")
+                if r.get("copias", 1) > 200 or int(r.get("copias", 1)) != r.get("copias", 1):
+                    raise SpecError(f"{where}: «copias» debe ser un entero de 1 a 200.")
+            elif r["tipo"] == "malla":
+                vs, fs = r.get("vertices"), r.get("caras")
+                ok = (isinstance(vs, list) and 4 <= len(vs) <= MAX_MESH and all(isinstance(q, list) and len(q) == 3 and all(
+                    isinstance(c, (int, float)) and not isinstance(c, bool) for c in q) for q in vs))
+                if not ok:
+                    raise SpecError(f"{where}: «vertices» debe ser una lista de 4 a {MAX_MESH} puntos [este, norte, fuera] en metros.")
+                if not (isinstance(fs, list) and fs and all(isinstance(q, list) and len(q) == 3 and all(isinstance(i, int) and 0 <= i < len(vs) for i in q) for q in fs)):
+                    raise SpecError(f"{where}: «caras» debe ser una lista de triángulos [i, j, k] con índices de «vertices».")
 
     @staticmethod
     def _check_chain(r, where):
@@ -205,7 +242,7 @@ class ObjectSpec:
                 raise SpecError(f"{where}: «{key}» debe llevar un eje [x, y, z]" + (" y «radio_m»." if key == "hueco" else "."))
         if r.get("hueco") is not None and not isinstance(r["hueco"].get("radio_m"), (int, float)):
             raise SpecError(f"{where}: «hueco» necesita «radio_m» en metros.")
-        if not 0 < r.get("radio_aro_m", 0.1) < r["radio_m"]:
+        if not isinstance(r.get("radio_aro_m", 0.1), (int, float)) or not 0 < r.get("radio_aro_m", 0.1) < r["radio_m"]:
             raise SpecError(f"{where}: «radio_aro_m» debe ser menor que el radio de la esfera ({r['radio_m']} m).")
 
     def _check_marks(self):
