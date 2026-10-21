@@ -196,34 +196,32 @@ def convert_reliefs(spec, src, dst, color=None):
 
 # ---------- adornos ----------
 def triskel_arm(size):
-    """Un brazo del triskel (triple espiral celta): cola desde el centro que se enrolla en una espiral. Medidas en metros sobre la superficie."""
-    Rt = size / 2
-    Rc, rho0 = 0.60 * Rt, 0.36 * Rt
-    s0 = (Rc, -rho0)                                       # inicio de la espiral (lado tangencial), el brazo apunta a +x
-    rs = math.hypot(*s0)
-    p0, p1 = (0.0, 0.0), (0.5 * rs * math.cos(0.55), 0.5 * rs * math.sin(0.55) - 0.1 * rs)
-    p2, p3 = (s0[0] - 0.42 * rs, s0[1]), s0
+    """Un brazo del triskel celta (triple espiral): la cola sale del centro, sube por el lado de la espiral y se enrolla hacia dentro
+    (~1,5 vueltas). Medidas en metros sobre la superficie; 'size' = diámetro total del triskel. El brazo apunta a +x."""
+    rho0 = size / 5.48                                     # radio de la espiral; centro de la espiral a 1,55·rho0 del centro del triskel
+    Dc = 1.55
+    P = [(0.0, 0.0), (0.1, 0.55), (1.0, 0.7), (1.0, Dc)]  # cola (Bézier cúbica) en unidades de rho0, brazo hacia +y
     pts = []
-    for i in range(9):
-        t = i / 8
-        pts.append([(1 - t) ** 3 * p0[0] + 3 * (1 - t) ** 2 * t * p1[0] + 3 * (1 - t) * t * t * p2[0] + t ** 3 * p3[0],
-                    (1 - t) ** 3 * p0[1] + 3 * (1 - t) ** 2 * t * p1[1] + 3 * (1 - t) * t * t * p2[1] + t ** 3 * p3[1]])
-    turns, n = 1.55, 26
+    for i in range(11):
+        t = i / 10
+        pts.append([sum(c * q[k] for c, q in zip(((1 - t) ** 3, 3 * (1 - t) ** 2 * t, 3 * (1 - t) * t * t, t ** 3), P)) for k in (0, 1)])
+    n, turns = 44, 1.15
     for i in range(1, n + 1):
-        a = -math.pi / 2 + 2 * math.pi * turns * i / n
-        rr = rho0 * (1 - 0.78 * i / n)
-        pts.append([Rc + rr * math.cos(a), rr * math.sin(a)])
-    return [[r5(x), r5(y)] for x, y in pts]
+        th = 2 * math.pi * turns * i / n
+        rr = 1.0 - 0.8 * (i / n) ** 0.9
+        pts.append([rr * math.cos(th), Dc + rr * math.sin(th)])
+    # giro de -90°: el brazo pasa a apuntar a +x (rotación, no espejo)
+    return [[r5(y * rho0), r5(-x * rho0)] for x, y in pts]
 
 
 def add_ornament(spec, shape, color=None, size=None, count=None, kind_color_from="cuerda"):
     R = radius(spec)
     spec.setdefault("relieves", [])
     if shape == "triskel":
-        size = float(size or 0.9 * R)
+        size = float(size or 1.35 * R)
         col = color or (spec.get("texturas", {}).get(kind_color_from, {}).get("color")) or "#b3202a"
         _texture(spec, "triskel", col)
-        width, rise = r5(size * 0.13), r5(size * 0.11)
+        width, rise = r5(size * 0.09), r5(size * 0.06)
         spec["relieves"] = [r for r in spec["relieves"] if r.get("textura") != "triskel"]
         spec["relieves"].append({"tipo": "trazo", "textura": "triskel", "radio_m": r5(R), "lat_grados": 90, "lon_grados": 0, "giro_grados": 0,
                                  "curvas": [triskel_arm(size)], "ancho_m": width, "sobresale_m": rise, "copias": 3, "paso_grados": 120})

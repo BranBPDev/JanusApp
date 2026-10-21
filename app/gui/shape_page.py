@@ -3,13 +3,13 @@ from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QDesktopServices, QImage, QPixmap
+from PySide6.QtGui import QDesktopServices, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup, QCheckBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QProgressBar, QPushButton, QSlider,
     QVBoxLayout, QWidget,
 )
 
-from app.gui.ai_chat import AiChatPanel
+from app.gui.ai_chat import ChatPanel
 from app.gui.viewer import MeshViewer
 from app.managers.shape_manager import PreviewWorker, ShapeWorker
 from app.shape.storage.project import load_project_source
@@ -44,104 +44,21 @@ class ShapePage(QWidget):
         self.project_root = None
         self.project_name = None   # proyecto existente que se está editando (None = proyecto nuevo)
         self.spec_text = None      # el JSON del objeto
-        self.spec_path = None
         self.preview = None        # lo que devolvió PreviewWorker
-        self.thumbs = {}
 
         root = QHBoxLayout(self)
-        root.setContentsMargins(28, 24, 28, 24)
-        root.setSpacing(20)
+        root.setContentsMargins(16, 16, 16, 16)
+        root.setSpacing(14)
 
-        # ---------- Panel izquierdo ----------
-        panel = QWidget()
-        panel.setFixedWidth(410)
-        lay = QVBoxLayout(panel)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(10)
-        title = QHBoxLayout()
-        title.addWidget(QLabel("Generar objeto 3D", objectName="Title"))
-        self.editing = QLabel("", objectName="Muted")
-        title.addWidget(self.editing, 1, Qt.AlignBottom)
-        lay.addLayout(title)
-        lay.addWidget(QLabel("Un único archivo JSON describe el objeto: medidas, texturas, vistas, apertura y esqueleto.",
-                             objectName="Subtitle", wordWrap=True))
+        # ---------- Chat con la IA (a la izquierda, junto a las pestañas) ----------
+        self.chat = ChatPanel(self._current_dict)
+        self.chat.setFixedWidth(430)
+        self.chat.spec_changed.connect(self._on_ai_spec)
+        self.chat.generate_requested.connect(self._generate)
+        self.chat.new_requested.connect(self.new_project)
+        root.addWidget(self.chat)
 
-        buttons = QHBoxLayout()
-        self.load_btn = QPushButton("Cargar JSON...")
-        self.load_btn.setToolTip("Elige el archivo .json del objeto.")
-        self.load_btn.clicked.connect(self._load_json)
-        buttons.addWidget(self.load_btn)
-        self.reload_btn = QPushButton("Recargar")
-        self.reload_btn.setToolTip("Vuelve a leer el archivo (si lo has editado).")
-        self.reload_btn.setEnabled(False)
-        self.reload_btn.clicked.connect(self._reload)
-        buttons.addWidget(self.reload_btn)
-        self.new_btn = QPushButton("Nuevo proyecto")
-        self.new_btn.setToolTip("Vacía el objeto y empieza un proyecto nuevo.")
-        self.new_btn.clicked.connect(self.new_project)
-        self.new_btn.hide()
-        buttons.addWidget(self.new_btn)
-        self.ai_btn = QPushButton("Asistente IA")
-        self.ai_btn.setCheckable(True)
-        self.ai_btn.setToolTip("Chat con una IA local que genera y modifica el JSON.")
-        buttons.addWidget(self.ai_btn)
-        lay.addLayout(buttons)
-        self.summary = QLabel("Ningún objeto cargado.", objectName="Muted", wordWrap=True)
-        lay.addWidget(self.summary)
-
-        # Vista previa de las vistas descritas en el JSON
-        card = QFrame(objectName="Card")
-        cl = QVBoxLayout(card)
-        cl.setContentsMargins(10, 8, 10, 10)
-        cl.setSpacing(6)
-        head = QHBoxLayout()
-        head.addWidget(QLabel("Vista previa", objectName="Brand"))
-        head.addStretch()
-        self.marks_box = QCheckBox("Cuadrícula y marcas")
-        self.marks_box.setToolTip("Superpone la malla (cuadrícula a escala, corte, bisagra, botón, salientes y huesos).")
-        self.marks_box.toggled.connect(self._refresh_preview)
-        head.addWidget(self.marks_box)
-        cl.addLayout(head)
-        grid = QGridLayout()
-        grid.setSpacing(6)
-        for i, (key, text) in enumerate(VIEW_TITLES):
-            box = QVBoxLayout()
-            box.setSpacing(1)
-            thumb = QLabel(objectName="Thumb")
-            thumb.setFixedSize(PREVIEW_SIDE, PREVIEW_SIDE)
-            thumb.setAlignment(Qt.AlignCenter)
-            self.thumbs[key] = thumb
-            box.addWidget(thumb)
-            box.addWidget(QLabel(text, objectName="CardTitle", alignment=Qt.AlignCenter))
-            grid.addLayout(box, i // 3, i % 3)
-        cl.addLayout(grid)
-        inner = QHBoxLayout()
-        inner.setSpacing(6)
-        for key, text in (("movable", "Interior de la tapa"), ("fixed", "Interior de la base")):
-            thumb = QLabel(objectName="Thumb")
-            thumb.setFixedSize(56, 56)
-            thumb.setAlignment(Qt.AlignCenter)
-            self.thumbs[key] = thumb
-            inner.addWidget(thumb)
-            inner.addWidget(QLabel(text, objectName="CardTitle", wordWrap=True), 1)
-        cl.addLayout(inner)
-        lay.addWidget(card)
-
-        self.gen_btn = QPushButton("Generar modelo 3D", objectName="Primary")
-        self.gen_btn.setCursor(Qt.PointingHandCursor)
-        self.gen_btn.setEnabled(False)
-        self.gen_btn.clicked.connect(self._generate)
-        lay.addWidget(self.gen_btn)
-        self.progress = QProgressBar(textVisible=False)
-        self.progress.setRange(0, 1000)
-        self.status = QLabel("", objectName="Muted")
-        self.status.setWordWrap(True)
-        lay.addWidget(self.progress)
-        lay.addWidget(self.status)
-        lay.addStretch()
-        root.addWidget(panel)
-
-        # ---------- Panel derecho ----------
+        # ---------- Visor 3D ----------
         right = QVBoxLayout()
         right.setSpacing(10)
         self.viewer = MeshViewer()
@@ -199,17 +116,11 @@ class ShapePage(QWidget):
         self.warn.hide()
         right.addWidget(self.info)
         right.addWidget(self.warn)
-        root.addWidget(panel_ai := self._build_ai())
         root.addLayout(right, 1)
-        self.ai_btn.toggled.connect(panel_ai.setVisible)
 
-    # ---------- Asistente IA ----------
-    def _build_ai(self):
-        self.ai = AiChatPanel(self._current_dict)
-        self.ai.spec_changed.connect(self._on_ai_spec)
-        self.ai.setFixedWidth(380)
-        self.ai.hide()
-        return self.ai
+    def showEvent(self, e):
+        super().showEvent(e)
+        QTimer.singleShot(200, self.chat.ensure_model)   # la IA integrada se carga sola al abrir la pestaña
 
     def _current_dict(self) -> dict:
         try:
@@ -222,8 +133,7 @@ class ShapePage(QWidget):
             QTimer.singleShot(300, lambda: self._on_ai_spec(text))
             return
         self._reset_result()
-        self._set_spec(text, None)
-        self.ai.refresh()
+        self._set_spec(text)
 
     # ---------- JSON y vista previa ----------
     def _busy(self) -> bool:
@@ -231,14 +141,7 @@ class ShapePage(QWidget):
 
     def _set_project(self, name):
         self.project_name = name
-        self.editing.setText(f"Editando: {name}" if name else "")
-        self.new_btn.setVisible(bool(name))
-
-    def _clear_preview(self):
-        self.preview = None
-        for thumb in self.thumbs.values():
-            thumb.clear()
-        self.gen_btn.setEnabled(False)
+        self.chat.set_editing(name)
 
     def _reset_result(self):
         self.result, self.project_root = None, None
@@ -250,110 +153,79 @@ class ShapePage(QWidget):
         self.open_btn.setEnabled(False)
         self.info.clear()
         self.warn.hide()
-        self.progress.setValue(0)
+        self.chat.set_progress(None)
         for b in self.lod_buttons:
             b.setEnabled(False)
 
-    def _set_spec(self, text: str, path):
+    def _set_spec(self, text: str):
         """Guarda el JSON y dibuja su vista previa en segundo plano."""
-        self.spec_text, self.spec_path = text, path
-        self.reload_btn.setEnabled(bool(path))
-        self._clear_preview()
-        self.summary.setText("Dibujando la vista previa...")
-        self.status.clear()
+        self.spec_text, self.preview = text, None
+        self.chat.set_status("Dibujando la vista previa…")
         self.preview_worker = PreviewWorker(text)
         self.preview_worker.done.connect(self._on_preview)
         self.preview_worker.failed.connect(self._on_preview_failed)
         self.preview_worker.start()
 
-    def _load_json(self):
-        if self._busy():
-            return
-        path, _ = QFileDialog.getOpenFileName(self, "Seleccionar el JSON del objeto", "", JSON_FILTER)
-        if path:
-            self._read(path)
-
-    def _reload(self):
-        if self.spec_path and not self._busy():
-            self._read(self.spec_path)
-
-    def _read(self, path):
-        try:
-            text = Path(path).read_text(encoding="utf-8")
-        except Exception as e:
-            self.status.setText(f"No se pudo leer el archivo: {e}")
-            return
-        self._reset_result()
-        self._set_spec(text, path)
-
     def _on_preview(self, data):
         self.preview = data
         w, h, d = data["size"]
         bones = f" · {data['bones']} huesos" if data["bones"] else ""
-        self.summary.setText(f"{data['name']}: {w:.3f} × {h:.3f} × {d:.3f} m (ancho × alto × fondo){bones}")
-        self.status.setText("\n".join(data["notes"]) if data["notes"] else "Revisa la vista previa y pulsa «Generar modelo 3D».")
-        self._refresh_preview()
-        self.gen_btn.setEnabled(True)
+        self.chat.set_status("")
+        self.chat.add_preview(self._preview_pixmap(data), f"{data['name']}: {w:.3f} × {h:.3f} × {d:.3f} m{bones}", "<br>".join(data["notes"]))
 
     def _on_preview_failed(self, message):
-        self.summary.setText("El JSON no se puede usar.")
-        self.status.setText(message)
-        self.gen_btn.setEnabled(False)
+        self.chat.set_status("")
+        self.chat.say_error(f"El JSON no se puede usar: {message}")
 
-    def _refresh_preview(self, *_):
-        data = self.preview
-        if not data:
-            return
-        marks = self.marks_box.isChecked()
-        for key, _title in VIEW_TITLES:
-            thumb = self.thumbs[key]
+    def _preview_pixmap(self, data) -> QPixmap:
+        """Las seis vistas (y los interiores si los hay) en una sola imagen para el chat."""
+        cell, gap = 128, 6
+        keys = [k for k, _ in VIEW_TITLES]
+        inner = [k for k in ("movable", "fixed") if k in data["interiors"]]
+        rows = 2 + (1 if inner else 0)
+        pix = QPixmap(3 * cell + 2 * gap, rows * cell + (rows - 1) * gap)
+        pix.fill(Qt.transparent)
+        p = QPainter(pix)
+        for i, key in enumerate(keys):
             if key in data["views"]:
-                layers = [data["views"][key]] + ([data["grids"][key]] if marks else [])
-                thumb.setPixmap(array_pixmap(layers, PREVIEW_SIDE))
-            else:
-                thumb.clear()
-        for key in ("movable", "fixed"):
-            thumb = self.thumbs[key]
-            if key in data["interiors"]:
-                thumb.setPixmap(array_pixmap([data["interiors"][key]], 52))
-            else:
-                thumb.clear()
+                p.drawPixmap((i % 3) * (cell + gap), (i // 3) * (cell + gap), array_pixmap([data["views"][key]], cell))
+        for i, key in enumerate(inner):
+            p.drawPixmap(i * (cell + gap), 2 * (cell + gap), array_pixmap([data["interiors"][key]], cell))
+        p.end()
+        return pix
 
     # ---------- Proyectos ----------
     def load_project(self, name: str):
         """Carga el JSON de un proyecto guardado para editarlo (se vuelve a leer y a dibujar su vista previa)."""
         if self._busy():
-            self.status.setText("Espera a que termine la generación en curso.")
+            self.chat.set_status("Espera a que termine la generación en curso.")
             return
         text = load_project_source(name)
         self._reset_result()
         self._set_project(name)
         if text is None:
-            self._clear_preview()
             self.spec_text = None
-            self.summary.setText("Este proyecto se hizo con imágenes y no tiene JSON.")
-            self.status.setText("Carga un JSON para volver a generarlo con el formato nuevo.")
+            self.chat.say_error("Este proyecto se hizo con imágenes y no tiene JSON. Pídele a la IA que lo cree de nuevo.")
             return
-        self._set_spec(text, None)
+        self.chat.say_ai(f"Proyecto <b>{name}</b> cargado. Dime qué quieres cambiar.")
+        self._set_spec(text)
 
     def new_project(self):
         if self._busy():
             return
-        self.spec_text, self.spec_path = None, None
-        self.reload_btn.setEnabled(False)
-        self._clear_preview()
+        self.spec_text, self.preview = None, None
         self._reset_result()
         self._set_project(None)
-        self.summary.setText("Ningún objeto cargado.")
-        self.status.clear()
+        self.chat.reset()
+        self.chat.say_ai("Objeto vaciado. ¿Qué quieres crear?")
 
     # ---------- Generación ----------
     def _generate(self):
         if not self.spec_text or self._busy():
             return
-        self.gen_btn.setEnabled(False)
+        self.chat.set_generate_enabled(False)
         self.warn.hide()
-        self.progress.setValue(0)
+        self.chat.set_progress(0)
         name = self.project_name or (self.preview or {}).get("name") or "objeto"
         self.worker = ShapeWorker(name, self.spec_text, (self.preview or {}).get("blueprint"))
         self.worker.progress.connect(self._on_progress)
@@ -362,20 +234,23 @@ class ShapePage(QWidget):
         self.worker.start()
 
     def _on_progress(self, fraction, message):
-        self.progress.setValue(int(fraction * 1000))
-        self.status.setText(message)
+        self.chat.set_progress(fraction)
+        self.chat.set_status(message)
 
     def _on_failed(self, message):
-        self.gen_btn.setEnabled(True)
-        self.progress.setValue(0)
-        self.status.setText(f"Error: {message}")
+        self.chat.set_generate_enabled(True)
+        self.chat.set_progress(None)
+        self.chat.set_status("")
+        self.chat.say_error(f"Error al generar: {message}")
 
     def _on_done(self, result, root):
         self.result, self.project_root = result, root
         self._set_project(self.worker.name)
-        self.gen_btn.setEnabled(True)
+        self.chat.set_generate_enabled(True)
+        self.chat.set_progress(None)
+        self.chat.set_status("")
+        self.chat.say_ai(f"Modelo 3D generado en {result.info['seconds']} s. Míralo a la derecha.")
         self.open_btn.setEnabled(True)
-        self.status.setText(f"Guardado en {root} ({result.info['seconds']} s)")
         for i, b in enumerate(self.lod_buttons):
             b.setEnabled(i < len(result.lods))
         self.lod_buttons[0].setChecked(True)

@@ -79,6 +79,13 @@ QToolButton#IconEdit { background: $elevated; border: 1px solid $border; border-
 QToolButton#IconEdit:hover { border-color: $accent; background: $accent_soft; }
 
 QCheckBox { spacing: 8px; }
+QFrame#BubbleAi { background: $elevated; border: 1px solid $border; border-radius: 12px; }
+QFrame#BubbleUser { background: $accent_soft; border: 1px solid $accent; border-radius: 12px; margin-left: 36px; }
+QFrame#BubbleAi QLabel, QFrame#BubbleUser QLabel { background: transparent; }
+QPushButton#Chip { text-align: left; padding: 8px 12px; background: transparent; border: 1px dashed $border; color: $muted; }
+QPushButton#Chip:hover { border-color: $accent; color: $text; }
+QPlainTextEdit { color: $text; background: $elevated; border: 1px solid $border; border-radius: 8px; padding: 6px 8px; selection-background-color: $accent; }
+QPlainTextEdit:focus { border-color: $accent; }
 QScrollArea { background: transparent; border: none; }
 
 QStatusBar { background: $surface; color: $muted; border-top: 1px solid $border; }

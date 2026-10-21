@@ -55,15 +55,6 @@ jobs:
       - name: Compilar EXE (PyInstaller)
         run: pyinstaller --clean --noconfirm JanusApp.spec
 
-      - name: Preparar ZIP Final
-        shell: pwsh
-        run: |
-          $out = "release_build"
-          New-Item -ItemType Directory -Force -Path "$out/app/data" | Out-Null
-          Copy-Item -Path "dist/JanusApp.exe" -Destination $out -Force
-          Copy-Item -Path "version.json" -Destination "$out/app/data/version.json"
-          Compress-Archive -Path "$out/*" -DestinationPath "JanusApp.zip" -CompressionLevel NoCompression -Force
-
       - name: Cache del modelo
         uses: actions/cache@v4
         with:
@@ -74,15 +65,23 @@ jobs:
         shell: pwsh
         run: |
           if (-not (Test-Path $env:MODEL_FILE)) { curl.exe -L --fail --retry 5 -o $env:MODEL_FILE $env:MODEL_URL }
-          $b = [System.IO.File]::ReadAllBytes($env:MODEL_FILE)[0..3]
+          $fs = [System.IO.File]::OpenRead($env:MODEL_FILE); $b = New-Object byte[] 4; [void]$fs.Read($b, 0, 4); $fs.Close()
           if ([System.Text.Encoding]::ASCII.GetString($b) -ne "GGUF") { throw "El modelo descargado no es GGUF" }
 
-      - name: ZIP Completo (con modelo)
+      - name: Preparar ZIP Final (con la IA incluida)
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path "release_build/app/models/ia" | Out-Null
-          Copy-Item -Path $env:MODEL_FILE -Destination "release_build/app/models/ia/" -Force
-          7z a -tzip -mx=0 JanusApp-Completo.zip ./release_build/*
+          $out = "release_build"
+          New-Item -ItemType Directory -Force -Path "$out/app/data", "$out/app/models/ia" | Out-Null
+          Copy-Item -Path "dist/JanusApp.exe" -Destination $out -Force
+          Copy-Item -Path "version.json" -Destination "$out/app/data/version.json"
+          Move-Item -Path $env:MODEL_FILE -Destination "$out/app/models/ia/$env:MODEL_FILE" -Force
+          # Sin compresión (el modelo y el .exe ya van comprimidos): rápido y por debajo del límite de 2 GiB por archivo del release.
+          Push-Location $out
+          7z a -tzip -mx=0 "../JanusApp.zip" "*"
+          Pop-Location
+          Get-Item JanusApp.zip | ForEach-Object { Write-Host "JanusApp.zip: $([math]::Round($_.Length/1MB)) MB" }
+          if ((Get-Item JanusApp.zip).Length -ge 2GB) { throw "JanusApp.zip supera los 2 GiB del límite de GitHub" }
 
       - name: Publicar en GitHub
         uses: softprops/action-gh-release@v2
@@ -94,7 +93,6 @@ jobs:
           make_latest: ${{ env.LATEST == 'true' }}
           files: |
             JanusApp.zip
-            JanusApp-Completo.zip
             version.json
           overwrite: true
         env:
