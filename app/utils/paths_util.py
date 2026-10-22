@@ -30,6 +30,8 @@ USER_DATA_DIRS = (LOGS_DIR, PROJECTS_DIR, SETTINGS_DIR, MODELS_DIR)
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 AI_MODELS_DIR.mkdir(parents=True, exist_ok=True)
 MAIN_LOG_PATH = LOGS_DIR / "janus.log"
+IA_LOG_DIR = LOGS_DIR / "ia"
+IA_LOG_PATH = IA_LOG_DIR / "peticiones.jsonl"     # peticiones a la IA y lo que respondió (para reentrenarla)
 
 # --- Recursos incluidos en el bundle ---
 ASSETS_DIR = INTERNAL_DIR / "app" / "assets"

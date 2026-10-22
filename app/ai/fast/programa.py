@@ -104,6 +104,8 @@ def run(spec, prog, hexes=(), nums=()):
     while i < len(toks):
         op = toks[i]
         i += 1
+        if op != "nuevo" and not data:
+            raise SpecError("Todavía no hay ningún objeto: pídeme primero uno («hazme una esfera con banda y botón»).")
         if op == "nuevo":
             kind = take("simple", "banda")
             if not kind:

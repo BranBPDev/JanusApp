@@ -4,9 +4,10 @@ from pathlib import Path
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import (
-    QFileDialog, QFrame, QHBoxLayout, QLabel, QPlainTextEdit, QProgressBar, QPushButton, QScrollArea, QVBoxLayout, QWidget,
+    QFileDialog, QInputDialog, QFrame, QHBoxLayout, QLabel, QPlainTextEdit, QProgressBar, QPushButton, QScrollArea, QVBoxLayout, QWidget,
 )
 
+from app.ai.fast import registro
 from app.ai.fast.asistente import Asistente
 from app.shape.spec.schema import SpecError
 from app.utils.logger_util import get_logger
@@ -54,7 +55,8 @@ class ChatPanel(QFrame):
         super().__init__(objectName="Card")
         self.current_spec = current_spec     # función: () -> dict del JSON actual o {}
         self.assistant = None
-        self.undo, self.attachments = [], []
+        self.undo, self.attachments, self.undo_ids = [], [], []
+        self.last_id = None
         self.gen_buttons = []
         self.model_state = "idle"            # idle | loading | ready | missing | failed
         self.setAcceptDrops(True)
@@ -137,7 +139,39 @@ class ChatPanel(QFrame):
         self._add(_bubble(html, "user"))
 
     def say_ai(self, html):
-        self._add(_bubble(html, "ai"))
+        frame = _bubble(html, "ai")
+        self._add(frame)
+        return frame
+
+    def _rating_row(self, frame, id_):
+        """Botones para valorar la respuesta: alimentan el registro con el que se reentrena la IA."""
+        row = QHBoxLayout()
+        row.addStretch()
+        label = QLabel("¿Lo hizo bien?", objectName="Muted")
+        good, bad = QPushButton("Bien"), QPushButton("Mal")
+        for b in (good, bad):
+            b.setFixedWidth(60)
+        row.addWidget(label)
+        row.addWidget(good)
+        row.addWidget(bad)
+        frame.layout().addLayout(row)
+
+        def done(text):
+            for w in (good, bad):
+                w.hide()
+            label.setText(text)
+
+        def on_good():
+            registro.valoracion(id_, True)
+            done("Anotado: bien.")
+
+        def on_bad():
+            text, ok = QInputDialog.getMultiLineText(self, "¿Qué debía hacer?", "Cuéntame con tus palabras qué esperabas (opcional):")
+            registro.valoracion(id_, False, text.strip() if ok else "")
+            done("Anotado: mal.")
+
+        good.clicked.connect(on_good)
+        bad.clicked.connect(on_bad)
 
     def say_error(self, text):
         self.say_ai(f"<span style='color:#F87171'>{text}</span>")
@@ -246,11 +280,16 @@ class ChatPanel(QFrame):
             del self.undo[:-MAX_UNDO]
         changes = "".join(f"<li>{c}</li>" for c in r.cambios)
         notes = "".join(f"<li><span style='color:#FBBF24'>{a}</span></li>" for a in r.avisos)
-        self.say_ai(f"Hecho en {r.segundos * 1000:.0f} ms.<ul style='margin:4px 0 0 0'>{changes}</ul>" + (f"<ul>{notes}</ul>" if notes else ""))
+        frame = self.say_ai(f"Hecho en {r.segundos * 1000:.0f} ms.<ul style='margin:4px 0 0 0'>{changes}</ul>" + (f"<ul>{notes}</ul>" if notes else ""))
+        self._rating_row(frame, r.id)
+        self.last_id = r.id
+        self.undo_ids.append(r.id)
         self.spec_changed.emit(json.dumps(r.spec, ensure_ascii=False, indent=1))
 
     def _undo(self):
         if self.undo:
+            if self.undo_ids:
+                registro.deshacer(self.undo_ids.pop())
             self.spec_changed.emit(json.dumps(self.undo.pop(), ensure_ascii=False, indent=1))
             self.say_ai("<i>Cambio deshecho.</i>")
             self._sync()
@@ -270,7 +309,7 @@ class ChatPanel(QFrame):
             item = self.msgs.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
-        self.gen_buttons, self.undo, self.attachments = [], [], []
+        self.gen_buttons, self.undo, self.attachments, self.undo_ids = [], [], [], []
         self.input.clear()
         self.set_status("")
         self.set_progress(None)

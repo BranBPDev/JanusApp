@@ -2,7 +2,7 @@
     "configs": {
         "tag": "v0.0.2",
         "name": "JanusApp v0.0.2",
-        "description": "Generación de modelos 3D a partir de las vistas 2D.",
+        "description": "Generación de modelos 3D.",
         "prerelease": false,
         "make_latest": true,
         "branch": "main"

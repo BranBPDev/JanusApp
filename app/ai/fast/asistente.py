@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 
 from app.ai.assistant import vision
-from app.ai.fast import programa
+from app.ai.fast import programa, registro
 from app.ai.fast.modelo import FastModel
 from app.ai.fast.texto import prepare
 from app.shape.spec.schema import FORMAT, SpecError
@@ -25,6 +25,7 @@ class Resultado:
     revisado: str = ""
     salida: str = ""
     segundos: float = 0.0
+    id: str = ""
 
 
 def palette(path, k=4) -> list:
@@ -67,12 +68,17 @@ class Asistente:
         words, hexes, nums = prepare(text, colors)
         ctx = programa.state(base) + (["img"] if colors else [])
         prog = self.model.generate(ctx, words)
+        names = [Path(a).name for a in adjuntos]
+        lit = {"hex": hexes, "medidas_m": [round(n, 4) for n in nums]}
         try:
             new, log = programa.run(base, prog, hexes, nums)
-        except SpecError as e:
-            raise SpecError(f"{e} (programa de la IA: {' '.join(prog)})")
+        except Exception as e:     # SpecError o cualquier fallo al montar las piezas: se registra para poder corregir a la IA
+            registro.peticion(text, ctx, prog, False, f"{type(e).__name__}: {e}", self.model.confidence, adjuntos=names,
+                              ms=(time.perf_counter() - t0) * 1000, literales=lit)
+            raise SpecError(f"{e if isinstance(e, SpecError) else 'No he podido aplicarlo a este objeto.'} (programa de la IA: {' '.join(prog)})")
         if self.model.confidence < 0.55:
             avisos.append("No estoy del todo seguro de haberte entendido; revisa el resultado o dímelo con otras palabras.")
         new.setdefault("formato", FORMAT)
         dt = time.perf_counter() - t0
-        return Resultado(new, log, avisos=avisos, salida=" ".join(prog), segundos=dt)
+        id_ = registro.peticion(text, ctx, prog, True, "", self.model.confidence, log, avisos, names, dt * 1000, lit)
+        return Resultado(new, log, avisos=avisos, salida=" ".join(prog), segundos=dt, id=id_)
