@@ -88,6 +88,10 @@ class MainWindow(QMainWindow):
 
         self.statusBar().showMessage("Listo")
 
+    def closeEvent(self, e):
+        self.pages["shape"].shutdown()
+        super().closeEvent(e)
+
     def _show_section(self, index: int):
         self.stack.setCurrentIndex(index)
         if SECTIONS[index][0] == "home":

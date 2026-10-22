@@ -214,6 +214,9 @@ def triskel_arm(size):
     return [[r5(y * rho0), r5(-x * rho0)] for x, y in pts]
 
 
+PIECES = {"anillo": ("toro", 0.8, 0.35), "bola": ("esfera", 0.45, 1.0), "cono": ("cono", 0.6, 1.0), "cilindro": ("cilindro", 0.5, 1.0)}
+
+
 def add_ornament(spec, shape, color=None, size=None, count=None, kind_color_from="cuerda"):
     R = radius(spec)
     spec.setdefault("relieves", [])
@@ -237,7 +240,16 @@ def add_ornament(spec, shape, color=None, size=None, count=None, kind_color_from
         set_margin(spec, 0.014 * s)
         set_height(spec, 2 * R + 0.04 * s * 0.9)
         return f"{n} pinchos"
-    raise SpecError("adorno: «forma» debe ser triskel o pinchos.")
+    if shape in PIECES:
+        d = float(size or PIECES[shape][1] * R)
+        h = d * PIECES[shape][2]
+        _texture(spec, "adorno", color or "#d9a928")
+        spec["relieves"] = [r for r in spec["relieves"] if r.get("textura") != "adorno"]
+        spec["relieves"].append({"tipo": "pieza", "textura": "adorno", "radio_m": r5(R), "forma": PIECES[shape][0], "lat_grados": 90,
+                                 "tamano_m": [r5(d), r5(d), r5(h)], "hunde_m": r5(min(0.004, h / 3))})
+        set_height(spec, 2 * R + h + 0.001)
+        return f"{shape} de {d * 100:.0f} cm arriba"
+    raise SpecError("adorno: «forma» debe ser triskel, pinchos, anillo, bola, cono o cilindro.")
 
 
 # ---------- paths ----------

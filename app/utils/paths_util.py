@@ -36,6 +36,7 @@ ASSETS_DIR = INTERNAL_DIR / "app" / "assets"
 LOGO_PNG = ASSETS_DIR / "logo.png"
 LOGO_ICO = ASSETS_DIR / "logo.ico"
 UPDATE_SCRIPT = ASSETS_DIR / "scripts" / "update.ps1"
+FAST_MODEL = ASSETS_DIR / "ia" / "janus_ia.npz"     # IA integrada (viaja dentro del .exe)
 
 # En el .exe la versión viaja en app/data (dentro del zip del release); en desarrollo se lee del version.json de la raíz.
 VERSION_JSON = DATA_DIR / "version.json" if IS_FROZEN else BASE_DIR / "version.json"
@@ -49,18 +50,3 @@ RELEASE_BASE_URL = f"https://github.com/{GITHUB_REPO}/releases/latest/download"
 REMOTE_VERSION_JSON = f"{RELEASE_BASE_URL}/version.json"
 LATEST_ZIP_URL = f"{RELEASE_BASE_URL}/{APP_NAME}.zip"
 
-
-def find_models() -> list:
-    """Modelos .gguf de la IA integrada (el más pequeño primero = el más rápido). Se busca junto al .exe y, en desarrollo, también en las
-    carpetas superiores del proyecto, para que funcione aunque la app se ejecute desde una carpeta de pruebas."""
-    dirs = [AI_MODELS_DIR, BASE_DIR / "app" / "models" / "ia", BASE_DIR / "models" / "ia", INTERNAL_DIR / "app" / "models" / "ia"]
-    if not IS_FROZEN:
-        for parent in BASE_DIR.parents[:3]:
-            dirs.append(parent / "app" / "models" / "ia")
-        dirs += [d for d in (BASE_DIR / "testing").glob("*/app/models/ia")]
-    found = {}
-    for d in dirs:
-        if d.is_dir():
-            for f in d.glob("*.gguf"):
-                found[str(f.resolve())] = f.stat().st_size
-    return [Path(p) for p, _ in sorted(found.items(), key=lambda kv: kv[1])]

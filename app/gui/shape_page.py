@@ -45,6 +45,7 @@ class ShapePage(QWidget):
         self.project_name = None   # proyecto existente que se está editando (None = proyecto nuevo)
         self.spec_text = None      # el JSON del objeto
         self.preview = None        # lo que devolvió PreviewWorker
+        self._orphans = []         # hilos de un objeto anterior: siguen hasta acabar pero ya no tocan la interfaz
 
         root = QHBoxLayout(self)
         root.setContentsMargins(16, 16, 16, 16)
@@ -122,6 +123,23 @@ class ShapePage(QWidget):
         super().showEvent(e)
         QTimer.singleShot(200, self.chat.ensure_model)   # la IA integrada se carga sola al abrir la pestaña
 
+    def _orphan(self):
+        """Suelta lo que haya en marcha (objeto nuevo o proyecto distinto): sus resultados se ignoran."""
+        for w in (self.worker, self.preview_worker):
+            if w is not None and w.isRunning():
+                w.blockSignals(True)
+                self._orphans.append(w)
+        self.worker = self.preview_worker = None
+        self._orphans = [w for w in self._orphans if w.isRunning()]
+
+    def shutdown(self):
+        """Al cerrar la aplicación no puede quedar ningún hilo trabajando."""
+        for w in [*self._orphans, self.worker, self.preview_worker]:
+            if w is not None and w.isRunning():
+                w.blockSignals(True)
+                w.terminate()
+                w.wait(1500)
+
     def _current_dict(self) -> dict:
         try:
             return json.loads(self.spec_text) if self.spec_text else {}
@@ -129,9 +147,7 @@ class ShapePage(QWidget):
             return {}
 
     def _on_ai_spec(self, text):
-        if self._busy():
-            QTimer.singleShot(300, lambda: self._on_ai_spec(text))
-            return
+        self._orphan()
         self._reset_result()
         self._set_spec(text)
 
@@ -197,9 +213,8 @@ class ShapePage(QWidget):
     # ---------- Proyectos ----------
     def load_project(self, name: str):
         """Carga el JSON de un proyecto guardado para editarlo (se vuelve a leer y a dibujar su vista previa)."""
-        if self._busy():
-            self.chat.set_status("Espera a que termine la generación en curso.")
-            return
+        self._orphan()
+        self.chat.reset()
         text = load_project_source(name)
         self._reset_result()
         self._set_project(name)
@@ -211,13 +226,11 @@ class ShapePage(QWidget):
         self._set_spec(text)
 
     def new_project(self):
-        if self._busy():
-            return
+        self._orphan()
         self.spec_text, self.preview = None, None
         self._reset_result()
         self._set_project(None)
         self.chat.reset()
-        self.chat.say_ai("Objeto vaciado. ¿Qué quieres crear?")
 
     # ---------- Generación ----------
     def _generate(self):
