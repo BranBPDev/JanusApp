@@ -6,6 +6,7 @@ Tipos de línea:
   deshacer   -> id (el usuario deshizo ese cambio)
 Se pasa este archivo para reentrenar la IA con los casos reales."""
 import json
+import os
 import threading
 import time
 import uuid
@@ -19,6 +20,8 @@ MAX_BYTES = 8 * 1024 * 1024
 
 
 def _write(entry: dict):
+    if os.environ.get("JANUS_IA_SIN_REGISTRO"):      # las pruebas no ensucian el registro real
+        return
     try:
         with _lock:
             IA_LOG_DIR.mkdir(parents=True, exist_ok=True)

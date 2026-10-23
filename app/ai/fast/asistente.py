@@ -28,18 +28,50 @@ class Resultado:
     id: str = ""
 
 
-def palette(path, k=4) -> list:
-    """Colores dominantes de una imagen (sin el fondo blanco o transparente), del más al menos presente."""
+def _background(rgb, alpha):
+    """Máscara del fondo: transparente, o píxeles claros conectados con el borde de la imagen."""
+    h, w = alpha.shape
+    light = (rgb.min(-1) > 235) | (alpha < 40)
+    bg = np.zeros((h, w), bool)
+    bg[0, :] = bg[-1, :] = bg[:, 0] = bg[:, -1] = True
+    bg &= light
+    for _ in range(h + w):                      # propagación desde el borde
+        grow = bg.copy()
+        grow[1:] |= bg[:-1]
+        grow[:-1] |= bg[1:]
+        grow[:, 1:] |= bg[:, :-1]
+        grow[:, :-1] |= bg[:, 1:]
+        grow &= light
+        if (grow == bg).all():
+            break
+        bg = grow
+    return bg
+
+
+def palette(path, k=6) -> list:
+    """Colores de una imagen en el orden de las piezas de una esfera con banda: [tapa, fondo, banda, botón].
+    tapa = el color más vivo; fondo = el más claro; banda = el más oscuro; botón = el segundo más claro (o el fondo)."""
     from PIL import Image
     im = Image.open(path).convert("RGBA")
-    im.thumbnail((72, 72))
-    px = np.asarray(im, np.float32).reshape(-1, 4)
-    px = px[(px[:, 3] > 200) & (px[:, :3].min(1) < 240)][:, :3]
-    if len(px) < k:
+    im.thumbnail((84, 84))
+    arr = np.asarray(im, np.float32)
+    bg = _background(arr[..., :3], arr[..., 3])
+    px = arr[..., :3][~bg & (arr[..., 3] > 200)]
+    if len(px) < 40:
         return []
     cent, lab = vision._kmeans(px, k)
-    order = np.argsort(-np.bincount(lab, minlength=k))
-    return [vision._hex(cent[i]) for i in order]
+    share = np.bincount(lab, minlength=k) / len(px)
+    keep = [i for i in range(k) if share[i] > 0.02]
+    chroma = cent.max(1) - cent.min(1)
+    light = cent.mean(1)
+    tapa = max(keep, key=lambda i: chroma[i] * (0.5 + share[i]))
+    rest = [i for i in keep if i != tapa]
+    dark = min(rest, key=lambda i: light[i]) if rest else tapa
+    rest2 = [i for i in rest if i != dark]
+    fondo = max(rest2, key=lambda i: light[i] - 0.3 * chroma[i]) if rest2 else tapa
+    rest3 = [i for i in rest2 if i != fondo]
+    boton = max(rest3, key=lambda i: light[i] - 0.3 * chroma[i]) if rest3 else fondo
+    return [vision._hex(cent[i]) for i in (tapa, fondo, dark, boton)]
 
 
 class Asistente:

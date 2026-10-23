@@ -49,7 +49,7 @@ def state(spec) -> list:
         out.append("tiene_cuerda")
     if "cadena" in kinds:
         out.append("tiene_cadena")
-    if "triskel" in names:
+    if "triskel" in names or "triskel" in tex:
         out.append("tiene_triskel")
     if "pinchos" in names:
         out.append("tiene_pinchos")
@@ -83,6 +83,11 @@ def run(spec, prog, hexes=(), nums=()):
     data = copy.deepcopy(spec) if spec else {}
     log, i = [], 0
     toks = [t for t in prog if t != "fin"]
+    for k in range(len(toks) - 1):                      # «plano adorno triskel» -> «adorno triskel plano»
+        if toks[k] in ("plano", "relieve") and toks[k + 1] == "adorno":
+            toks[k], toks[k + 1] = "adorno", toks[k]
+            if k + 2 < len(toks):
+                toks[k + 1], toks[k + 2] = toks[k + 2], toks[k + 1]
 
     def take(*allowed):
         nonlocal i
@@ -150,9 +155,12 @@ def run(spec, prog, hexes=(), nums=()):
             form = take(*FORMS)
             if not form:
                 raise SpecError("«adorno» necesita una forma.")
-            col, size, count = None, None, None
+            col, size, count, flat = None, None, None, False
             while i < len(toks):
-                if is_color(toks[i]):
+                if toks[i] in ("plano", "relieve"):
+                    flat = toks[i] == "plano"
+                    i += 1
+                elif is_color(toks[i]):
                     col = optional_color()
                 elif toks[i] == "tam":
                     i += 1
@@ -167,7 +175,7 @@ def run(spec, prog, hexes=(), nums=()):
                 raise SpecError("No hay objeto al que añadir el adorno.")
             if col is None and form == "triskel":
                 col = (data.get("texturas", {}).get("cuerda") or data.get("texturas", {}).get("cadena") or {}).get("color")
-            log.append(ops.add_ornament(data, form, col, size, count))
+            log.append(ops.add_ornament(data, form, col, size, count, flat=flat and form == "triskel"))
         elif op == "quitar":
             what = take("adornos", "cuerdas", "cadenas")
             if not what:
@@ -186,6 +194,8 @@ def run(spec, prog, hexes=(), nums=()):
             if what == "adornos":
                 for name in ORNAMENTS:
                     data.get("texturas", {}).pop(name, None)
+                for v in data.get("vistas", {}).values():
+                    v["capas"] = [c for c in v["capas"] if c.get("textura") != "triskel"]
             log.append(f"{before - len(keep)} relieves quitados")
         else:
             raise SpecError(f"El programa tiene una orden desconocida: «{op}».")

@@ -155,7 +155,7 @@ def band_by(spec, kind, color=None):
     spec["relieves"] = [r for r in spec.get("relieves", []) if r.get("textura") != name]
     y0 = (h / 2 + 0.0003) / (1 + h / (2 * R))
     ring_eq = math.sqrt(R * R - y0 * y0)
-    rho = rb + h / 2
+    rho = rb + h * 0.2
     hole = r5(_chord(R, rho + h / 2) * 0.9)
     eq = {"tipo": kind, "textura": name, "radio_m": r5(R), "eje": [0, 1, 0], "radio_aro_m": r5(ring_eq), **_rope_params(R, h, kind, ring_eq),
           "hueco": {"eje": [0, 0, 1], "radio_m": hole}}
@@ -217,19 +217,29 @@ def triskel_arm(size):
 PIECES = {"anillo": ("toro", 0.8, 0.35), "bola": ("esfera", 0.45, 1.0), "cono": ("cono", 0.6, 1.0), "cilindro": ("cilindro", 0.5, 1.0)}
 
 
-def add_ornament(spec, shape, color=None, size=None, count=None, kind_color_from="cuerda"):
+def add_ornament(spec, shape, color=None, size=None, count=None, kind_color_from="cuerda", flat=False):
     R = radius(spec)
     spec.setdefault("relieves", [])
     if shape == "triskel":
         size = float(size or 1.35 * R)
         col = color or (spec.get("texturas", {}).get(kind_color_from, {}).get("color")) or "#b3202a"
         _texture(spec, "triskel", col)
-        width, rise = r5(size * 0.09), r5(size * 0.06)
         spec["relieves"] = [r for r in spec["relieves"] if r.get("textura") != "triskel"]
+        top = spec["vistas"]["arriba"]["capas"]
+        top[:] = [c for c in top if c.get("textura") != "triskel"]
+        if flat:      # dibujado en la textura de la tapa (vista de arriba), sin relieve
+            cx, cy = spec["medidas_m"]["ancho"] / 2, spec["medidas_m"]["fondo"] / 2
+            arm = triskel_arm(size)
+            for k in range(3):
+                a = math.radians(120 * k)
+                pts = [[r5(cx + x * math.cos(a) - y * math.sin(a)), r5(cy + x * math.sin(a) + y * math.cos(a))] for x, y in arm]
+                top.append({"textura": "triskel", "forma": "linea", "puntos": pts, "grosor": r5(size * 0.09)})
+            return f"triskel de {size * 100:.0f} cm dibujado en la tapa (sin relieve)"
+        width, rise = r5(size * 0.09), r5(size * 0.06)
         spec["relieves"].append({"tipo": "trazo", "textura": "triskel", "radio_m": r5(R), "lat_grados": 90, "lon_grados": 0, "giro_grados": 0,
                                  "curvas": [triskel_arm(size)], "ancho_m": width, "sobresale_m": rise, "copias": 3, "paso_grados": 120})
         set_height(spec, 2 * R + rise + 0.001)
-        return f"triskel de {size * 100:.0f} cm centrado arriba"
+        return f"triskel de {size * 100:.0f} cm sobresaliendo, centrado arriba"
     if shape in ("pinchos", "conos"):
         n = int(count or 6)
         _texture(spec, "pinchos", color or "#d9a928")

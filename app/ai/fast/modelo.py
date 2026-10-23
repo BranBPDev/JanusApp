@@ -60,7 +60,7 @@ class FastModel:
     def generate(self, ctx_tokens, words, max_new=60):
         """Programa (lista de fichas) para la petición; ctx_tokens = estado del objeto, words = palabras ya normalizadas."""
         v = self.vocab
-        ids = [v.id(t) for t in ctx_tokens] + [v.stoi[SEP]] + [v.word(t) if not t.startswith("<") else v.id(t) for t in words][:70] + [v.stoi[OUT]]
+        ids = [v.id(t) for t in ctx_tokens] + [v.stoi[SEP]] + [v.word(t) if not t.startswith("<") else v.id(t) for t in words][:120] + [v.stoi[OUT]]
         cache = [None] * self.L
         out, self.confidence = [], 1.0
         logits = self._forward(np.array(ids), cache, 0)

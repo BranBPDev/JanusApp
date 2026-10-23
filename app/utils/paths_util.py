@@ -21,8 +21,6 @@ DATA_DIR = APP_DIR / "data"
 LOGS_DIR = APP_DIR / "logs"
 PROJECTS_DIR = APP_DIR / "projects"
 SETTINGS_DIR = APP_DIR / "settings"
-MODELS_DIR = APP_DIR / "models"
-AI_MODELS_DIR = MODELS_DIR / "ia"      # aquí se deja el archivo .gguf del modelo de IA
 
 # Datos del usuario que una actualización NUNCA debe borrar (dentro de 'app').
 USER_DATA_DIRS = (LOGS_DIR, PROJECTS_DIR, SETTINGS_DIR, MODELS_DIR)
