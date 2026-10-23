@@ -55,6 +55,11 @@ def state(spec) -> list:
         out.append("tiene_pinchos")
     if "adorno" in names:
         out.append("tiene_adorno")
+    layers = [c for v in spec.get("vistas", {}).values() for c in v.get("capas", []) if c.get("textura") == "triskel"]
+    if layers:
+        out.append("triskel_plano")
+        if any("tallado" in c for c in layers):
+            out.append("tiene_tallado")
     return out
 
 
@@ -155,9 +160,16 @@ def run(spec, prog, hexes=(), nums=()):
             form = take(*FORMS)
             if not form:
                 raise SpecError("«adorno» necesita una forma.")
-            col, size, count, flat = None, None, None, False
+            col, size, count, flat, carve = None, None, None, False, None
             while i < len(toks):
-                if toks[i] in ("plano", "relieve"):
+                if toks[i] in ("tallado", "tallado_relieve"):
+                    carve = {"tipo": "relieve" if toks[i] == "tallado_relieve" else "grabado", "profundidad": 0.8}
+                    i += 1
+                elif toks[i] in ("piedra", "madera"):
+                    carve = carve or {"tipo": "grabado", "profundidad": 0.8}
+                    carve["grano"] = toks[i]
+                    i += 1
+                elif toks[i] in ("plano", "relieve"):
                     flat = toks[i] == "plano"
                     i += 1
                 elif is_color(toks[i]):
@@ -175,7 +187,24 @@ def run(spec, prog, hexes=(), nums=()):
                 raise SpecError("No hay objeto al que añadir el adorno.")
             if col is None and form == "triskel":
                 col = (data.get("texturas", {}).get("cuerda") or data.get("texturas", {}).get("cadena") or {}).get("color")
-            log.append(ops.add_ornament(data, form, col, size, count, flat=flat and form == "triskel"))
+            log.append(ops.add_ornament(data, form, col, size, count, flat=flat and form == "triskel", carve=carve if form == "triskel" else None))
+        elif op == "tallar":
+            what = take("triskel")
+            if not what:
+                raise SpecError("«tallar» necesita qué tallar (triskel).")
+            carve = {"tipo": "grabado", "profundidad": 0.8}
+            while i < len(toks) and toks[i] in ("tallado", "tallado_relieve", "piedra", "madera"):
+                if toks[i] == "tallado_relieve":
+                    carve["tipo"] = "relieve"
+                elif toks[i] in ("piedra", "madera"):
+                    carve["grano"] = toks[i]
+                i += 1
+            try:
+                log.append(ops.carve_texture(data, "triskel", carve))
+            except SpecError:
+                if any(r.get("textura") == "triskel" for r in data.get("relieves", [])):
+                    raise
+                log.append(ops.add_ornament(data, "triskel", None, None, None, flat=True, carve=carve))
         elif op == "quitar":
             what = take("adornos", "cuerdas", "cadenas")
             if not what:

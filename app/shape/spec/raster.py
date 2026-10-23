@@ -131,6 +131,64 @@ def edge(mask, px):
     return (count > 0) & (count < (2 * r + 1) ** 2)
 
 
+def _blur(a, sigma):
+    """Desenfoque gaussiano separable (numpy puro)."""
+    r = max(1, int(round(sigma * 3)))
+    k = np.exp(-0.5 * (np.arange(-r, r + 1) / sigma) ** 2).astype(np.float32)
+    k /= k.sum()
+    for axis in (0, 1):
+        pad = [(0, 0), (0, 0)]
+        pad[axis] = (r, r)
+        p = np.pad(a, pad, mode="edge")
+        out = np.zeros_like(a)
+        for i, w in enumerate(k):
+            out += w * (p[i:i + a.shape[0]] if axis == 0 else p[:, i:i + a.shape[1]])
+        a = out
+    return a
+
+
+def carve(rgb, mask, sil, spec, frame, light, grain_seed=3):
+    """Efecto de TALLADO sobre la zona 'mask': los colores se conservan y solo se modula su brillo como si la forma estuviera hundida
+    (tipo «grabado», por defecto) o elevada (tipo «relieve») con bordes redondeados y una sombra en la arista. 'grano' (madera|piedra)
+    añade la rugosidad fina del material. Se aplica sobre 'rgb' (alto, ancho, 3) en el sitio."""
+    ys, xs = np.nonzero(mask)
+    if not len(xs):
+        return
+    depth = float(spec.get("profundidad", 0.7))
+    bevel = float(spec.get("ancho_m", 0.0035))
+    sigma = max(1.2, bevel * frame.k)
+    sign = -1.0 if spec.get("tipo", "grabado") == "grabado" else 1.0
+    m_ = int(sigma * 5) + 2
+    y0, y1 = max(0, ys.min() - m_), min(frame.h, ys.max() + m_ + 1)
+    x0, x1 = max(0, xs.min() - m_), min(frame.w, xs.max() + m_ + 1)
+    sub = (slice(y0, y1), slice(x0, x1))
+    m = mask[sub].astype(np.float32)
+    h = _blur(m, sigma)
+    grain = spec.get("grano")
+    if grain in ("madera", "piedra"):
+        yy, xx = np.mgrid[y0:y1, x0:x1].astype(np.float32)
+        cell = frame.k * (0.0016 if grain == "piedra" else 0.0012)
+        sy = 1.0 if grain == "piedra" else 0.12            # la veta de la madera es alargada
+        n = 0.6 * _noise(xx / cell, yy / (cell / sy if sy < 1 else cell), grain_seed) + 0.4 * _noise(xx / (cell * 0.45), yy / ((cell * 0.45) / sy if sy < 1 else cell * 0.45), grain_seed + 5)
+        h = h + (n - 0.5) * 0.22 * m
+    gy, gx = np.gradient(h)
+    S = depth * sigma * 2.6
+    nx, ny = -sign * gx * S, -sign * gy * S                # normal en el plano de la imagen (y hacia abajo)
+    nz = np.ones_like(h)
+    inv = 1 / np.sqrt(nx * nx + ny * ny + nz * nz)
+    L = np.array(light.get("luz", [-0.45, 0.6, 0.65]), np.float32)
+    L = L / np.linalg.norm(L)
+    shade = (nx * L[0] - ny * L[1] + nz * L[2]) * inv       # +y de la luz = hacia arriba en pantalla
+    factor = 1 + 1.6 * depth * (shade - L[2])
+    wide = _blur(m, sigma * 1.7)
+    occl = (wide * (1 - m)) if sign > 0 else ((1 - wide) * m)   # sombra en la arista: fuera si sobresale, dentro si está hundido
+    factor *= 1 - 0.9 * depth * np.clip(occl * 1.6, 0, 0.55)
+    region = (_blur(m, sigma * 1.2) > 0.01) & sil[sub]
+    factor = np.clip(factor, 0.35, 1.45)
+    block = rgb[sub]
+    block[region] = np.clip(block[region] * factor[region][:, None], 0, 255)
+
+
 def draw_layers(textures, light, layers, frame: Frame):
     """(rgb float (h, w, 3), silueta bool) de una lista de capas, en el orden dado."""
     masks = [shape_mask(c, frame) for c in layers]
@@ -152,6 +210,8 @@ def draw_layers(textures, light, layers, frame: Frame):
         if c.get("sombrear") and c.get("forma") in ("circulo", "elipse"):
             color = np.clip(color * _sphere_factor(c, frame, light, box)[..., None], 0, 255)
         rgb[sub][m[sub]] = color[m[sub]]
+        if "tallado" in c:
+            carve(rgb, m, sil, c["tallado"], frame, light)
         if "borde" in c:
             e = edge(m, c["borde"].get("grosor_m", 0.001) * frame.k / 2) & sil
             rgb[e] = parse_color(c["borde"].get("color", "#000000"), "borde")

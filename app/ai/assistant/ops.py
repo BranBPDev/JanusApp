@@ -217,7 +217,7 @@ def triskel_arm(size):
 PIECES = {"anillo": ("toro", 0.8, 0.35), "bola": ("esfera", 0.45, 1.0), "cono": ("cono", 0.6, 1.0), "cilindro": ("cilindro", 0.5, 1.0)}
 
 
-def add_ornament(spec, shape, color=None, size=None, count=None, kind_color_from="cuerda", flat=False):
+def add_ornament(spec, shape, color=None, size=None, count=None, kind_color_from="cuerda", flat=False, carve=None):
     R = radius(spec)
     spec.setdefault("relieves", [])
     if shape == "triskel":
@@ -227,14 +227,19 @@ def add_ornament(spec, shape, color=None, size=None, count=None, kind_color_from
         spec["relieves"] = [r for r in spec["relieves"] if r.get("textura") != "triskel"]
         top = spec["vistas"]["arriba"]["capas"]
         top[:] = [c for c in top if c.get("textura") != "triskel"]
+        flat = flat or bool(carve)
         if flat:      # dibujado en la textura de la tapa (vista de arriba), sin relieve
             cx, cy = spec["medidas_m"]["ancho"] / 2, spec["medidas_m"]["fondo"] / 2
             arm = triskel_arm(size)
             for k in range(3):
                 a = math.radians(120 * k)
                 pts = [[r5(cx + x * math.cos(a) - y * math.sin(a)), r5(cy + x * math.sin(a) + y * math.cos(a))] for x, y in arm]
-                top.append({"textura": "triskel", "forma": "linea", "puntos": pts, "grosor": r5(size * 0.09)})
-            return f"triskel de {size * 100:.0f} cm dibujado en la tapa (sin relieve)"
+                layer = {"textura": "triskel", "forma": "linea", "puntos": pts, "grosor": r5(size * 0.09)}
+                if carve:
+                    layer["tallado"] = dict(carve)
+                top.append(layer)
+            how = "tallado en la tapa" + (f" ({carve['tipo']}, {carve['grano']})" if carve.get("grano") else f" ({carve['tipo']})") if carve else "dibujado en la tapa (sin relieve)"
+            return f"triskel de {size * 100:.0f} cm {how}"
         width, rise = r5(size * 0.09), r5(size * 0.06)
         spec["relieves"].append({"tipo": "trazo", "textura": "triskel", "radio_m": r5(R), "lat_grados": 90, "lon_grados": 0, "giro_grados": 0,
                                  "curvas": [triskel_arm(size)], "ancho_m": width, "sobresale_m": rise, "copias": 3, "paso_grados": 120})
@@ -399,3 +404,16 @@ def apply_ops(spec: dict, ops) -> tuple:
             raise SpecError(f"{w}: operación «{kind}» desconocida.")
     data.setdefault("formato", FORMAT)
     return data, log
+
+
+def carve_texture(spec, name, carve):
+    """Añade (o cambia) el efecto de tallado a las capas dibujadas de una textura (p. ej. el triskel dibujado en la tapa)."""
+    n = 0
+    for v in spec.get("vistas", {}).values():
+        for c in v.get("capas", []):
+            if c.get("textura") == name and not c.get("silueta"):
+                c["tallado"] = dict(carve)
+                n += 1
+    if not n:
+        raise SpecError(f"No hay nada dibujado en la textura «{name}» que se pueda tallar (los relieves que sobresalen no se tallan).")
+    return f"{name}: tallado ({carve['tipo']}{', ' + carve['grano'] if carve.get('grano') else ''})"

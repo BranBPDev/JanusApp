@@ -59,7 +59,9 @@ Estructura (todas las medidas en METROS):
 Capas (se dibujan en orden): "forma" = circulo (centro, radio) | elipse (centro, radios [rx, ry]) | rect (esquina [x, y],
 tamano [ancho, alto], radio_esquina) | poligono (puntos) | linea (puntos, grosor). Opciones: "textura" (nombre),
 "silueta": true (la capa forma parte de la silueta: lo demás solo se pinta dentro de ella), "recorte": [x0, y0, x1, y1],
-"borde": {"color", "grosor_m"}, "sombrear": true (círculo/elipse sombreado como una esfera).
+"borde": {"color", "grosor_m"}, "sombrear": true (círculo/elipse sombreado como una esfera),
+"tallado": {"tipo": "grabado|relieve", "profundidad": 0.7, "ancho_m": 0.0035, "grano": "piedra|madera"} (efecto de talla en la textura:
+conserva los colores y solo modula el brillo con bordes redondeados y sombra en la arista).
 
 Coordenadas de cada vista: como en la imagen, origen abajo a la izquierda del cuadro que ocupa el objeto en esa vista.
   frente/detras: x = ancho, y = alto · derecha (el frente mira a la derecha) / izquierda (el frente mira a la izquierda):
@@ -169,6 +171,10 @@ class ObjectSpec:
         shape = c.get("forma", "circulo")
         if shape not in SHAPES:
             raise SpecError(f"{w}: forma desconocida {shape!r}. Usa: {', '.join(SHAPES)}.")
+        tallado = c.get("tallado")
+        if tallado is not None:
+            if not isinstance(tallado, dict) or tallado.get("tipo", "grabado") not in ("grabado", "relieve") or tallado.get("grano") not in (None, "piedra", "madera"):
+                raise SpecError(f"{w}.tallado: debe ser {{\"tipo\": grabado|relieve, \"profundidad\", \"ancho_m\", \"grano\": piedra|madera}}.")
         if shape in ("circulo", "elipse"):
             parse_point(c.get("centro"), w + ".centro")
             if shape == "circulo" and not isinstance(c.get("radio"), (int, float)):
