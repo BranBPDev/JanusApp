@@ -7,12 +7,13 @@ from pathlib import Path
 import numpy as np
 
 from app.ai.assistant import vision
-from app.ai.fast import programa, registro
+from app.ai.fast import imagen3d, programa, registro
+from app.ai.fast.colores import bases_in
 from app.ai.fast.modelo import FastModel
 from app.ai.fast.texto import prepare
 from app.shape.spec.schema import FORMAT, SpecError
 
-IMAGE_EXT = {".png", ".jpg", ".jpeg", ".bmp", ".webp", ".gif"}
+IMAGE_EXT = imagen3d.IMAGE_EXT | imagen3d.VECTOR_EXT
 
 
 @dataclass
@@ -51,8 +52,7 @@ def _background(rgb, alpha):
 def palette(path, k=6) -> list:
     """Colores de una imagen en el orden de las piezas de una esfera con banda: [tapa, fondo, banda, botón].
     tapa = el color más vivo; fondo = el más claro; banda = el más oscuro; botón = el segundo más claro (o el fondo)."""
-    from PIL import Image
-    im = Image.open(path).convert("RGBA")
+    im = imagen3d.open_image(path).convert("RGBA")
     im.thumbnail((84, 84))
     arr = np.asarray(im, np.float32)
     bg = _background(arr[..., :3], arr[..., 3])
@@ -80,30 +80,43 @@ class Asistente:
 
     def pedir(self, text, spec, adjuntos=(), **_) -> Resultado:
         t0 = time.perf_counter()
-        avisos, colors, base = [], [], spec
+        avisos, colors, base, images = [], [], spec, []
         for path in adjuntos:
             ext = Path(path).suffix.lower()
             if ext in IMAGE_EXT:
-                colors = palette(path)
-                if not colors:
-                    avisos.append(f"No he sacado colores de {Path(path).name}.")
+                images.append(path)
             elif ext == ".json":
                 try:
                     data = json.loads(Path(path).read_text(encoding="utf-8"))
                     if isinstance(data, dict) and data.get("formato") == FORMAT:
                         base = data
                         avisos.append(f"Tomo {Path(path).name} como objeto de partida.")
+                    else:
+                        avisos.append(f"{Path(path).name} no es un objeto de JanusApp (falta «formato»: «{FORMAT}»).")
                 except Exception:
-                    avisos.append(f"{Path(path).name} no es un JSON de objeto.")
+                    avisos.append(f"{Path(path).name} no es un JSON válido.")
             else:
-                avisos.append(f"Ignoro {Path(path).name}: adjunta imágenes o un JSON de objeto.")
+                avisos.append(f"No sé leer {Path(path).name}: adjunta imágenes (PNG, JPG, SVG…) o un JSON de objeto.")
+        views = {imagen3d.view_of(p) for p in images}
+        if images:                                   # colores de la imagen de frente (o de la primera)
+            ref = next((p for p in images if imagen3d.view_of(p) == "frente"), images[0])
+            try:
+                colors = palette(ref)
+            except Exception:
+                colors = []
+            if not colors:
+                avisos.append(f"No he sacado colores de {Path(ref).name}.")
         words, hexes, nums = prepare(text, colors)
-        ctx = programa.state(base) + (["img"] if colors else [])
+        ctx = programa.state(base)
+        if images:
+            ctx += ["img"] + (["img_frente"] if "frente" in views else []) + (["img_lateral"] if views & {"lateral", "izquierda", "derecha"} else [])
         prog = self.model.generate(ctx, words)
+        vocab = self.model.vocab
+        said = bases_in(w if w.startswith("<") else vocab.itos[vocab.word(w)] for w in words)
         names = [Path(a).name for a in adjuntos]
         lit = {"hex": hexes, "medidas_m": [round(n, 4) for n in nums]}
         try:
-            new, log = programa.run(base, prog, hexes, nums)
+            new, log = programa.run(base, prog, hexes, nums, {"imagenes": images}, said)
         except Exception as e:     # SpecError o cualquier fallo al montar las piezas: se registra para poder corregir a la IA
             registro.peticion(text, ctx, prog, False, f"{type(e).__name__}: {e}", self.model.confidence, adjuntos=names,
                               ms=(time.perf_counter() - t0) * 1000, literales=lit)

@@ -44,6 +44,24 @@ def prepare(text: str, extra_hex=()):
     return words, hexes[:MAX_LIT], nums[:MAX_LIT]
 
 
+_KEYS = ["qwertyuiop", "asdfghjklñ", "zxcvbnm"]
+_POS = {c: (r, i) for r, row in enumerate(_KEYS) for i, c in enumerate(row)}
+
+
+def _adjacent(a: str, b: str) -> bool:
+    """¿Son dos teclas vecinas del teclado (una errata típica)?"""
+    return a in _POS and b in _POS and abs(_POS[a][0] - _POS[b][0]) <= 1 and abs(_POS[a][1] - _POS[b][1]) <= 1
+
+
+def _score(w: str, cand: str) -> float:
+    s = difflib.SequenceMatcher(None, w, cand).ratio()
+    if len(w) == len(cand):
+        diff = [(x, y) for x, y in zip(w, cand) if x != y]
+        if len(diff) == 1 and _adjacent(*diff[0]):
+            s += 0.08
+    return s
+
+
 class Vocab:
     def __init__(self, tokens):
         self.itos = list(tokens)
@@ -58,10 +76,10 @@ class Vocab:
         i = self.stoi.get(w)
         if i is not None:
             return i
-        if len(w) > 3 and not w.isdigit():
-            near = difflib.get_close_matches(w, self._words, n=1, cutoff=0.8)
+        if len(w) > 3 and not w.isdigit() and not w.startswith("<"):
+            near = difflib.get_close_matches(w, self._words, n=4, cutoff=0.74 if len(w) == 4 else 0.8)
             if near:
-                return self.stoi[near[0]]
+                return self.stoi[max(near, key=lambda c: _score(w, c))]
         return self.stoi[UNK]
 
 

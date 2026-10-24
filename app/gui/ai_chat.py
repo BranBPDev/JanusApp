@@ -15,7 +15,7 @@ from app.utils.paths_util import FAST_MODEL
 
 log = get_logger("AI_CHAT")
 
-ATTACH_FILTER = "Imágenes y objetos (*.png *.jpg *.jpeg *.bmp *.webp *.gif *.json)"
+ATTACH_FILTER = "Imágenes y objetos (*.png *.jpg *.jpeg *.jfif *.bmp *.webp *.gif *.tif *.tiff *.tga *.svg *.json)"
 MAX_UNDO = 30
 SUGGESTIONS = (
     ("Esfera simple azul", "Hazme una esfera simple azul"),

@@ -2,13 +2,16 @@
 import copy
 
 from app.ai.assistant import ejemplos, ops
+from app.ai.fast import imagen3d
 from app.shape.spec.schema import SpecError
 
 SHADES = {"": 1.0, "_claro": None, "_oscuro": None}
 BASE = {"rojo": "#d32f2f", "azul": "#1e63d6", "verde": "#2e9e4f", "amarillo": "#f4d51f", "naranja": "#f28c1b", "morado": "#7b3fb5",
         "rosa": "#f28ab4", "negro": "#1b1b1f", "blanco": "#f4f4f4", "gris": "#8d8f98", "marron": "#7a4a26", "dorado": "#d9a928",
         "plateado": "#c4c8d0", "turquesa": "#22c7c7", "beige": "#e6d5b0"}
-FIXED = {"negro_claro": "#4a4a52", "negro_oscuro": "#0b0b0d", "blanco_oscuro": "#cfcfcf", "blanco_claro": "#ffffff"}
+FIXED = {"negro_claro": "#4a4a52", "negro_oscuro": "#0b0b0d", "blanco_oscuro": "#cfcfcf", "blanco_claro": "#ffffff",
+         "dorado_oscuro": "#b8891f", "dorado_claro": "#ecd68a"}
+STARTER = ("nuevo banda banda cuerda rojo color tapa dorado adorno triskel tallado").split()   # la «starterball», como la definió el usuario
 ORNAMENTS = {"triskel", "pinchos", "adorno"}
 SLOT_TEXTURE = {"tapa": "tapa", "fondo": "fondo", "banda": "banda", "boton": "cierre", "cuerda": "cuerda", "cadena": "cadena",
                 "triskel": "triskel", "pinchos": "pinchos", "adorno": "adorno"}
@@ -83,11 +86,24 @@ def _slots(data, slot):
     return [name]
 
 
-def run(spec, prog, hexes=(), nums=()):
-    """(spec_nuevo, cambios). Lanza SpecError si el programa no se puede aplicar."""
+def surface_color(data):
+    """Color de la superficie donde se talla (la tapa, o el cuerpo si es de un solo color)."""
+    tex = data.get("texturas", {})
+    return (tex.get("tapa") or tex.get("cuerpo") or {}).get("color")
+
+
+def _carved(data):
+    return any("tallado" in c for v in data.get("vistas", {}).values() for c in v.get("capas", []) if c.get("textura") == "triskel")
+
+
+def run(spec, prog, hexes=(), nums=(), fuentes=None, pedidos=None):
+    """(spec_nuevo, cambios). Lanza SpecError si el programa no se puede aplicar.
+    fuentes = {"imagenes": [rutas]} para «desde_imagenes»; pedidos = colores base que nombró el usuario (None = sin comprobar):
+    un color que la IA escribe y el usuario no pidió se ignora."""
     data = copy.deepcopy(spec) if spec else {}
     log, i = [], 0
     toks = [t for t in prog if t != "fin"]
+    free = set()                                        # posiciones de fichas que añade una macro (starter): sus colores no se comprueban
     for k in range(len(toks) - 1):                      # «plano adorno triskel» -> «adorno triskel plano»
         if toks[k] in ("plano", "relieve") and toks[k + 1] == "adorno":
             toks[k], toks[k + 1] = "adorno", toks[k]
@@ -104,19 +120,43 @@ def run(spec, prog, hexes=(), nums=()):
     def is_color(t):
         return t is not None and (t.startswith("<h") or t.split("_")[0] in BASE or t in FIXED)
 
+    def asked(t, pos):
+        """¿Pidió el usuario este color? (los literales y los de una macro siempre valen)"""
+        return pedidos is None or pos in free or t.startswith("<h") or t.split("_")[0] in pedidos
+
     def optional_color():
         nonlocal i
         if i < len(toks) and is_color(toks[i]):
             i += 1
+            if not asked(toks[i - 1], i - 1):
+                log.append(f"ignoro el color «{toks[i - 1]}»: no lo pediste")
+                return None
             return color_hex(toks[i - 1], hexes)
         return None
 
     while i < len(toks):
         op = toks[i]
         i += 1
-        if op != "nuevo" and not data:
+        if op not in ("nuevo", "starter", "desde_imagenes", "pedir_imagenes") and not data:
             raise SpecError("Todavía no hay ningún objeto: pídeme primero uno («hazme una esfera con banda y botón»).")
-        if op == "nuevo":
+        if op == "starter":                              # macro: se sustituye por sus órdenes
+            toks[i:i] = STARTER
+            free.update(range(i, i + len(STARTER)))
+        elif op == "pedir_imagenes":
+            raise SpecError("Eso no lo puedo construir con mis piezas (esferas, bandas, cuerdas, cadenas, adornos). Adjunta imágenes con el nombre de la vista "
+                            "(«frente», «lateral», «detras»…) o un JSON del objeto y lo hago a partir de ellos.")
+        elif op == "desde_imagenes":
+            height = None
+            if i < len(toks) and toks[i] == "alto":
+                height = _num(toks[i + 1] if i + 1 < len(toks) else "", nums, "alto")
+                i += 2
+            paths = (fuentes or {}).get("imagenes") or []
+            if not paths:
+                raise SpecError("Para hacer un objeto a partir de imágenes adjunta al menos una de frente y otra lateral "
+                                "(que el nombre del archivo diga «frente», «lateral»…).")
+            data, notes = imagen3d.build(paths, height)
+            log += notes
+        elif op == "nuevo":
             kind = take("simple", "banda")
             if not kind:
                 raise SpecError("«nuevo» necesita simple o banda.")
@@ -143,16 +183,32 @@ def run(spec, prog, hexes=(), nums=()):
                 raise SpecError("No hay objeto que colorear.")
             if slot is None or not is_color(col):
                 raise SpecError("«color» necesita una zona y un color.")
+            if not asked(col, i - 1):
+                log.append(f"ignoro {slot} → {col}: no lo pediste")
+                continue
             hx = color_hex(col, hexes)
+            old_surface = surface_color(data)
             for tex in _slots(data, slot):
                 data, _ = ops.apply_ops(data, [{"op": "color", "textura": tex, "valor": hx}])
+            if slot in ("tapa", "todo", "cuerpo") and "triskel" in data.get("texturas", {}) and _carved(data) \
+                    and data["texturas"]["triskel"].get("color") == old_surface:
+                data["texturas"]["triskel"]["color"] = hx      # el tallado sigue el color de la superficie mientras no se pida otro
             log.append(f"{slot} → {hx}")
         elif op == "banda":
             kind = take("cuerda", "cadena")
             if not kind:
                 raise SpecError("«banda» necesita cuerda o cadena.")
             col = optional_color()
-            log.append(ops.band_by(data, kind, col))
+            has_band = any(c.get("textura") == "banda" for v in data.get("vistas", {}).values() for c in v.get("capas", []))
+            kinds = {r.get("tipo") for r in data.get("relieves", [])}
+            if not has_band and kind in kinds:               # ya la tiene: solo cambia el color si lo piden
+                if col:
+                    ops._texture(data, kind, col)
+                log.append(f"ya tiene {kind}" + (f"; color → {col}" if col else ""))
+            elif not has_band and kinds & {"cuerda", "cadena"}:
+                log.append(ops.convert_reliefs(data, "cadena" if kind == "cuerda" else "cuerda", kind, col))
+            else:
+                log.append(ops.band_by(data, kind, col))
         elif op in ("a_cuerda", "a_cadena"):
             dst = op[2:]
             log.append(ops.convert_reliefs(data, "cadena" if dst == "cuerda" else "cuerda", dst, optional_color()))
@@ -186,25 +242,35 @@ def run(spec, prog, hexes=(), nums=()):
             if not data:
                 raise SpecError("No hay objeto al que añadir el adorno.")
             if col is None and form == "triskel":
-                col = (data.get("texturas", {}).get("cuerda") or data.get("texturas", {}).get("cadena") or {}).get("color")
+                if carve:                                    # tallado: el color de la superficie donde se talla, salvo que pidan otro
+                    col = surface_color(data)
+                else:
+                    col = (data.get("texturas", {}).get("cuerda") or data.get("texturas", {}).get("cadena") or {}).get("color")
             log.append(ops.add_ornament(data, form, col, size, count, flat=flat and form == "triskel", carve=carve if form == "triskel" else None))
         elif op == "tallar":
             what = take("triskel")
             if not what:
                 raise SpecError("«tallar» necesita qué tallar (triskel).")
             carve = {"tipo": "grabado", "profundidad": 0.8}
-            while i < len(toks) and toks[i] in ("tallado", "tallado_relieve", "piedra", "madera"):
+            col = None
+            while i < len(toks) and (toks[i] in ("tallado", "tallado_relieve", "piedra", "madera") or is_color(toks[i])):
                 if toks[i] == "tallado_relieve":
                     carve["tipo"] = "relieve"
                 elif toks[i] in ("piedra", "madera"):
                     carve["grano"] = toks[i]
+                elif toks[i] != "tallado":
+                    col = optional_color()
+                    continue
                 i += 1
+            surface = col or surface_color(data)
             try:
                 log.append(ops.carve_texture(data, "triskel", carve))
+                if surface and "triskel" in data.get("texturas", {}):
+                    ops._texture(data, "triskel", surface)
             except SpecError:
                 if any(r.get("textura") == "triskel" for r in data.get("relieves", [])):
                     raise
-                log.append(ops.add_ornament(data, "triskel", None, None, None, flat=True, carve=carve))
+                log.append(ops.add_ornament(data, "triskel", surface, None, None, flat=True, carve=carve))
         elif op == "quitar":
             what = take("adornos", "cuerdas", "cadenas")
             if not what:

@@ -22,20 +22,48 @@ python main.py
 | pillow | `>=10` |
 | numpy | `>=1.26,<3` |
 
-En desarrollo (`IS_FROZEN = False`): `BASE_DIR` es la raíz del repo, la versión se lee de `version.json`, **no se actualiza** y los logs salen también por consola. `testing/` está ignorada por git y por el workflow. Depura con `app/logs/janus.log` (`CRASH` = excepción no capturada).
+La IA y el dominio solo usan numpy + Pillow (sin torch, sin red). En desarrollo (`IS_FROZEN = False`): `BASE_DIR` es la raíz del repo, la versión se lee de `version.json`, **no se actualiza** y los logs salen también por consola. `testing/` está ignorada por git y por el workflow. Depura con `app/logs/janus.log` (`CRASH` = excepción no capturada).
 
 ## 📐 Convenciones
 
 | Tema | Regla |
 |---|---|
-| Capas | `gui` solo widgets · `managers` hilos y señales · `shape` dominio sin Qt · `utils` un tema por `*_util.py` |
-| Hilos | Todo lo largo en un `QThread` con `progress(float,str)`, `finished_ok`/`done`, `failed(str)` |
+| Capas | `gui` solo widgets · `managers` hilos y señales · `ai` y `shape` sin Qt · `utils` un tema por `*_util.py` |
+| Hilos | Todo lo largo en un `QThread` con `progress(float,str)`, `finished_ok`/`done`, `failed(str)`. La IA responde en ms y no usa hilos |
 | Estilos | Por `objectName` desde `theme.py`; colores de `COLORS`; nada en línea |
 | Datos de usuario | Bajo `app/` y en `USER_DATA_DIRS`; rutas **solo** en `paths_util.py` |
-| Errores | `get_logger("NOMBRE")`, `exc_info=True`; validación de dominio con `ValueError` legible |
+| Errores | `get_logger("NOMBRE")`, `exc_info=True`; validación con `SpecError`/`ValueError` de mensaje legible |
 | Estilo | Textos y logs en español · docstrings breves con unidades y ejes · constantes en mayúsculas arriba · tipado ligero |
 
-**Añadir una fase**: 1) `(clave, texto)` en `SECTIONS` y su página · 2) worker en `app/managers/` · 3) clave en `PHASES` (`project.py`) · 4) documentarla y enlazarla desde el README.
+**Añadir una fase**: 1) `(clave, texto)` en `SECTIONS` y su página · 2) worker en `app/managers/` · 3) clave en `PHASES` (`storage/project.py`) · 4) documentarla y enlazarla desde el README.
+
+## 🧪 Pruebas
+
+| Comando | Qué hace |
+|---|---|
+| `python testing/probar_objeto.py testing/objetos/pokeball.json [salida]` | Interpreta un JSON, calcula el modelo y guarda `vista_previa.png` y los GLB |
+| `python testing/ia/probar_rapido.py [modelo.npz]` | Acierto de la IA en ejemplos nuevos, peticiones escritas a mano (compara los **objetos** resultantes) y tiempos |
+| `python testing/ia/desde_logs.py peticiones.jsonl` | Resumen de un registro de la IA (fallos y correcciones) |
+
+`testing/objetos/` guarda objetos de ejemplo (esferas, starterball con cuerda, triskel tallado…).
+
+## 🧠 Entrenar la IA
+
+Todo es numpy puro (retropropagación escrita a mano; `gradcheck` comprueba el gradiente antes de entrenar).
+
+```powershell
+python testing/ia/entrenar.py [pasos] [salida.npz] [pesos_previos.npz] [lr] [semilla]
+python testing/ia/entrenar.py 2000 salida.npz app/assets/ia/janus_ia.npz 1.5e-3 21     # continuar desde los pesos actuales
+```
+
+- Los ejemplos salen de `testing/ia/datos.py`: un generador de peticiones en español (con erratas, sinónimos y frases largas) + estado del objeto → programa. Cada **intención** es una función (`i_color`, `i_adorno`, `i_tallar`, `i_starter`, `i_desde_imagenes`, `i_recolor_desc`…).
+- Si cambia el vocabulario, el entrenamiento arranca desde los pesos previos remapeando las fichas (*warm start*).
+- Guarda un punto cada 500 pasos. A ~1,4 s por paso, 2000 pasos son ~45 min en dos núcleos. El proceso debe seguir vivo hasta acabar.
+- Después, `probar_rapido.py` y copiar el `.npz` a `app/assets/ia/janus_ia.npz`.
+
+**Reentrenar con casos reales**: 1) pide el `peticiones.jsonl` de `app/logs/ia/` · 2) mira las líneas `peticion` con `ok: false` y las `valoracion` con `correccion` · 3) añade al generador la frase y el programa correcto (o una intención nueva) · 4) reentrena y comprueba que los casos pasan.
+
+**Añadir una orden**: 1) ejecutarla en `ai/fast/programa.py` (y la geometría en `ai/assistant/ops.py`) · 2) generarla en `datos.py` · 3) si el contexto cambia, una ficha nueva en `programa.state` · 4) reentrenar.
 
 ## 📦 Compilar
 
@@ -43,7 +71,7 @@ En desarrollo (`IS_FROZEN = False`): `BASE_DIR` es la raíz del repo, la versió
 pyinstaller --clean --noconfirm JanusApp.spec
 ```
 
-Genera `dist/JanusApp.exe`: *onefile*, sin consola, icono `app/assets/logo.ico`, incluye `app/assets`, excluye `tkinter`, `numpy.f2py` y `PIL.ImageTk` y recorta componentes de Qt sin uso (QML, Quick, PDF, SVG, `opengl32sw.dll`, traducciones…).
+Genera `dist/JanusApp.exe`: *onefile*, sin consola, icono `app/assets/logo.ico`, incluye `app/assets` (con el modelo de la IA, ~1,2 MB), excluye `tkinter`, `numpy.f2py` y `PIL.ImageTk` y recorta componentes de Qt sin uso (QML, Quick, PDF, SVG, `opengl32sw.dll`, traducciones…).
 
 ## 🚢 Publicar una versión
 
@@ -55,13 +83,13 @@ Genera `dist/JanusApp.exe`: *onefile*, sin consola, icono `app/assets/logo.ico`,
 | `userjson` | `name`, `version`, `releaseDate`, `author`, `repository` → es `app/data/version.json` en la app |
 
 1. Sube `configs.tag`, `configs.name`, `userjson.version`, `userjson.releaseDate` y la descripción.
-2. Commit y push a `main`.
+2. Commit y push a `main` (o ejecuta el workflow a mano: `workflow_dispatch`).
 3. El workflow compila y publica; los clientes se actualizan al abrir.
 
 > [!NOTE]
 > Un push que solo toque `*.md` o `testing/**` **no** lanza release.
 
-**Workflow `build_release.yml`** (`windows-latest`, concurrencia `release` con cancelación): checkout → Python 3.11 con caché → `pip install` → lee `version.json` y lo reescribe solo con `userjson` → PyInstaller → `JanusApp.zip` (`JanusApp.exe` + `app/data/version.json`, sin compresión) → `softprops/action-gh-release@v2` con `JanusApp.zip` y `version.json` (`overwrite`). Permiso `contents: write`.
+**Workflow `build_release.yml`** (`windows-latest`, concurrencia `release` con cancelación): checkout → Python 3.11 con caché → `pip install` → lee `version.json` y lo reescribe solo con `userjson` → PyInstaller → `JanusApp.zip` (`JanusApp.exe` + `app/data/version.json`, sin compresión; **ligero**: no se descarga ningún modelo) → `softprops/action-gh-release@v2` con `JanusApp.zip` y `version.json` (`overwrite`). Permiso `contents: write`.
 
 ## 🔄 Actualización automática
 
