@@ -10,8 +10,9 @@ BASE = {"rojo": "#d32f2f", "azul": "#1e63d6", "verde": "#2e9e4f", "amarillo": "#
         "rosa": "#f28ab4", "negro": "#1b1b1f", "blanco": "#f4f4f4", "gris": "#8d8f98", "marron": "#7a4a26", "dorado": "#d9a928",
         "plateado": "#c4c8d0", "turquesa": "#22c7c7", "beige": "#e6d5b0"}
 FIXED = {"negro_claro": "#4a4a52", "negro_oscuro": "#0b0b0d", "blanco_oscuro": "#cfcfcf", "blanco_claro": "#ffffff",
-         "dorado_oscuro": "#b8891f", "dorado_claro": "#ecd68a"}
-STARTER = ("nuevo banda banda cuerda rojo color tapa dorado adorno triskel tallado").split()   # la «starterball», como la definió el usuario
+         "dorado_oscuro": "#b8891f", "dorado_claro": "#ecd68a",
+         "starter_cuerda": "#000080", "starter_tapa": "#808000", "starter_mar": "#008040"}      # los colores de la starterball
+STARTER = ("nuevo banda banda cuerda starter_cuerda color tapa starter_tapa color fondo starter_mar mar fondo adorno triskel tallado").split()   # la «starterball», como la definió el usuario
 ORNAMENTS = {"triskel", "pinchos", "adorno"}
 SLOT_TEXTURE = {"tapa": "tapa", "fondo": "fondo", "banda": "banda", "boton": "cierre", "cuerda": "cuerda", "cadena": "cadena",
                 "triskel": "triskel", "pinchos": "pinchos", "adorno": "adorno"}
@@ -89,7 +90,8 @@ def _slots(data, slot):
 def surface_color(data):
     """Color de la superficie donde se talla (la tapa, o el cuerpo si es de un solo color)."""
     tex = data.get("texturas", {})
-    return (tex.get("tapa") or tex.get("cuerpo") or {}).get("color")
+    t = tex.get("tapa") or tex.get("cuerpo") or {}
+    return t.get("color") or (t.get("mar") or {}).get("color")
 
 
 def _carved(data):
@@ -196,6 +198,14 @@ def run(spec, prog, hexes=(), nums=(), fuentes=None, pedidos=None):
                     and data["texturas"]["triskel"].get("color") == old_surface:
                 data["texturas"]["triskel"]["color"] = hx      # el tallado sigue el color de la superficie mientras no se pida otro
             log.append(f"{slot} → {hx}")
+        elif op == "mar":
+            slot = take()
+            if slot is None or not data:
+                raise SpecError("«mar» necesita una zona (por ejemplo el fondo).")
+            col = optional_color()
+            for tex in _slots(data, slot):
+                data, _ = ops.apply_ops(data, [{"op": "mar", "textura": tex, **({"valor": col} if col else {})}])
+            log.append(f"{slot} → textura de mar")
         elif op == "banda":
             kind = take("cuerda", "cadena")
             if not kind:

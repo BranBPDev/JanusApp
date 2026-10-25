@@ -17,12 +17,13 @@ from app.shape.spec.schema import FORMAT, SpecError
 
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".jfif", ".bmp", ".webp", ".gif", ".tif", ".tiff", ".tga"}
 VECTOR_EXT = {".svg"}
-SIDE = 200                  # lado mayor al que se reduce cada imagen para analizarla
-CLUSTERS = 6
-MERGE_DIST = 34.0           # dos colores más cerca que esto (RGB) se funden
-MIN_BLOB = 0.004            # una mancha de color debe cubrir al menos esta fracción de la silueta
-MAX_LAYERS = 60
+SIDE = 360                  # lado mayor al que se reduce cada imagen para analizarla
+CLUSTERS = 14
+MERGE_DIST = 24.0           # dos colores más cerca que esto (RGB) se funden
+MIN_BLOB = 0.0006            # una mancha de color debe cubrir al menos esta fracción de la silueta
+MAX_LAYERS = 220
 DEFAULT_HEIGHT = 0.3
+ORGANIC = 3.0                # redondeo de las secciones del volumen (el casco visual de unas siluetas es muy anguloso)
 DEPTH_GUESS = 0.7           # fondo / ancho cuando solo hay una vista
 VIEWS = ("frente", "detras", "izquierda", "derecha", "arriba", "abajo")
 WORDS = {"detras": ("detras", "atras", "back", "trasera", "posterior", "rear", "espalda"),
@@ -277,6 +278,78 @@ def object_mask(im: Image.Image):
     return rgb[sl], mask[sl]
 
 
+# ---------------------------------------------------------------- hojas con varias vistas ----------
+SHEET_ORDER = ("frente", "izquierda", "arriba", "detras", "abajo")     # orden habitual de una hoja de vistas, de izquierda a derecha
+SHEET_MIN_ASPECT = 1.5
+
+
+def _dilate(m, n):
+    for _ in range(n):
+        g = m.copy()
+        g[1:] |= m[:-1]
+        g[:-1] |= m[1:]
+        g[:, 1:] |= m[:, :-1]
+        g[:, :-1] |= m[:, 1:]
+        m = g
+    return m
+
+
+def split_sheet(im: Image.Image):
+    """Si la imagen es una hoja con varias vistas una al lado de otra (fondo claro, cuadrícula y textos), devuelve
+    [(vista, imagen RGBA recortada con transparencia, (ancho_px, alto_px) a la escala de la hoja)] de izquierda a derecha; si no, []."""
+    im = im.convert("RGB")
+    if im.width / im.height < SHEET_MIN_ASPECT:
+        return []
+    k = max(1, round(max(im.size) / 700))
+    small = im.resize((im.width // k, im.height // k))
+    a = np.asarray(small).astype(np.int16)
+    mx, mn = a.max(-1), a.min(-1)
+    bg = (mn > 200) & (mx - mn < 60)                         # blanco, cuadrícula pálida
+    sat = (mx - mn) / np.maximum(mx, 1)
+    core = (sat > 0.22) & ~bg
+    lab, n = _label(_dilate(core, 3))
+    if n == 0:
+        return []
+    sizes = np.bincount(lab.ravel(), minlength=n + 1)
+    boxes = []
+    for i in range(1, n + 1):
+        if sizes[i] < 0.004 * lab.size:
+            continue
+        ys, xs = np.nonzero(lab == i)
+        boxes.append([xs.min(), xs.max(), [i]])
+    boxes.sort()
+    groups = []
+    for b in boxes:                                          # lo que se solapa en horizontal es la misma vista
+        if groups and b[0] <= groups[-1][1]:
+            groups[-1][1] = max(groups[-1][1], b[1])
+            groups[-1][2] += b[2]
+        else:
+            groups.append(b)
+    if len(groups) < 2 or len(groups) > len(SHEET_ORDER):
+        return []
+    out = []
+    for view, (x0, x1, ids) in zip(SHEET_ORDER, groups):
+        region = np.isin(lab, ids)
+        mask = region & ~bg
+        filled = ~_flood(_edge(mask), ~mask)                   # rellena los huecos cerrados (ojos, interior)
+        ys, xs = np.nonzero(filled)
+        if len(xs) < 80:
+            return []
+        # a resolución completa: sube la máscara y recorta
+        full = np.asarray(Image.fromarray((filled * 255).astype(np.uint8)).resize(im.size, Image.NEAREST)) > 127
+        fy, fx = np.nonzero(full)
+        sl = (slice(fy.min(), fy.max() + 1), slice(fx.min(), fx.max() + 1))
+        rgba = np.dstack([np.asarray(im)[sl], (full[sl] * 255).astype(np.uint8)])
+        out.append((view, Image.fromarray(rgba, "RGBA"), (rgba.shape[1], rgba.shape[0])))
+    return out
+
+
+def _edge(mask):
+    e = np.zeros_like(mask)
+    e[0, :] = e[-1, :] = e[:, 0] = e[:, -1] = True
+    return e
+
+
 _RING = ((0, -1), (-1, -1), (-1, 0), (-1, 1), (0, 1), (1, 1), (1, 0), (1, -1))
 
 
@@ -400,7 +473,7 @@ def view_layers(im, prefix, w_m=None, h_m=None):
     sx, sy = w_m / max(W - 1, 1), h_m / max(H - 1, 1)
     conv = lambda poly: [[round(float(x * sx), 5), round(float((H - 1 - y) * sy), 5)] for x, y in poly]
     textures = {f"{prefix}{i + 1}": {"color": _hex(c)} for i, c in enumerate(colors)}
-    layers = [{"textura": f"{prefix}1", "forma": "poligono", "puntos": conv(simplify(outline(mask), 90)), "silueta": True}]
+    layers = [{"textura": f"{prefix}1", "forma": "poligono", "puntos": conv(simplify(outline(mask), 220)), "silueta": True}]
     blobs = []
     total = int(mask.sum())
     for i in range(len(colors)):
@@ -418,7 +491,7 @@ def view_layers(im, prefix, w_m=None, h_m=None):
     blobs.sort(key=lambda b: (-b[0], -b[1]))                # las grandes primero: lo pequeño se pinta encima
     kept = sorted(blobs, key=lambda b: -b[1])[:MAX_LAYERS - 1]
     for box, area, i, sel in sorted(kept, key=lambda b: (-b[0], -b[1])):
-        poly = simplify(outline(sel), 40 if area > 0.05 * total else 16)
+        poly = simplify(outline(sel), 90 if area > 0.05 * total else 36)
         if len(poly) >= 3:
             layers.append({"textura": f"{prefix}{i + 1}", "forma": "poligono", "puntos": conv(poly)})
     return textures, layers, ratio
@@ -454,11 +527,23 @@ def build(paths, height=None, name="objeto"):
     files = [p for p in paths if Path(p).suffix.lower() in IMAGE_EXT | VECTOR_EXT]
     if not files:
         raise SpecError("No hay imágenes que usar: adjunta al menos una vista de frente y otra lateral (PNG, JPG, SVG…).")
+    sheet, log0 = {}, []
+    for p in list(files):
+        if not view_of(p):
+            parts = split_sheet(open_image(p))
+            if parts:
+                files.remove(p)
+                for v, im, size in parts:
+                    sheet[v] = (im, size)
+                log0.append(f"{Path(p).name}: es una hoja con {len(parts)} vistas ({', '.join(v for v, _, _ in parts)}); las separo.")
     chosen, log = assign(files)
-    if not chosen:
+    log = log0 + log
+    chosen = {v: p for v, p in chosen.items() if v not in sheet}
+    if not chosen and not sheet:
         raise SpecError("Ninguna imagen se puede usar como vista; ponle «frente» o «lateral» en el nombre del archivo.")
     H = float(height or DEFAULT_HEIGHT)
     ims = {v: open_image(p) for v, p in chosen.items()}
+    ims.update({v: im for v, (im, _) in sheet.items()})
     ratios = {}
     for v, im in ims.items():                                  # relación ancho/alto de cada vista
         rgb, mask = object_mask(im)
@@ -471,19 +556,33 @@ def build(paths, height=None, name="objeto"):
     else:
         depth = side * H
         width = depth / DEPTH_GUESS
+    if sheet and "frente" in sheet:                           # misma escala en toda la hoja: las medidas salen de los píxeles
+        k = H / sheet["frente"][1][1]
+        width = sheet["frente"][1][0] * k
+        side_px = next((sheet[v][1][0] for v in ("derecha", "izquierda") if v in sheet), None)
+        depth = side_px * k if side_px else width * DEPTH_GUESS
+        side = depth / H
     guessed = []
     if "frente" not in ratios and "detras" not in ratios:
         guessed.append("frente")
     if side is None:
         guessed.append("lateral")
     dims = {"frente": (width, H), "detras": (width, H), "izquierda": (depth, H), "derecha": (depth, H), "arriba": (width, depth), "abajo": (width, depth)}
+    if sheet:
+        k = H / sheet.get("frente", next(iter(sheet.values())))[1][1]
+        for v, (_, (pw, ph)) in sheet.items():
+            if v in ("frente", "detras", "izquierda", "derecha"):
+                dims[v] = (pw * k, H if abs(ph * k - H) < 0.06 * H else ph * k)
+            else:                                              # cenital: ancho × fondo (se ajusta si difiere poco de las otras vistas)
+                near = lambda a, b: b if abs(a - b) < 0.1 * b else a
+                dims[v] = (near(pw * k, width), near(ph * k, depth))
     textures, views = {}, {}
     for v, im in ims.items():
         w, h = dims[v]
         t, layers, _ = view_layers(im, f"{v[:3]}_", w, h)
         textures.update(t)
         views[v] = {"capas": layers}
-        log.append(f"{v} ← {Path(chosen[v]).name}: silueta de {len(layers[0]['puntos'])} puntos y {len(t)} colores")
+        log.append(f"{v} ← {Path(chosen[v]).name if v in chosen else "hoja"}: silueta de {len(layers[0]['puntos'])} puntos y {len(t)} colores")
     base_of = lambda v: next(iter(t for t in textures if t.startswith(f"{v[:3]}_")))
     if "frente" not in views and "detras" not in views:       # sin frontal: elipse con el color principal de la lateral
         views["frente"] = {"capas": [{"textura": base_of(next(iter(ims))), "forma": "elipse", "centro": [width / 2, H / 2], "radios": [width / 2, H / 2], "silueta": True}]}
@@ -494,6 +593,6 @@ def build(paths, height=None, name="objeto"):
         log.append("Solo tengo " + ("la vista " + ", ".join(v for v in views if v not in guessed) if len(views) - len(guessed) == 1 else "algunas vistas")
                    + f": {' y '.join(guessed)} es una estimación; con una imagen de frente y otra lateral sale mejor.")
     spec = {"formato": FORMAT, "nombre": name, "medidas_m": {"ancho": round(width, 4), "alto": round(H, 4), "fondo": round(depth, 4)},
-            "texturas": textures, "vistas": views, "marcas": {}}
+            "redondeo": ORGANIC, "texturas": textures, "vistas": views, "marcas": {}}
     log.insert(0, f"objeto desde imágenes: {width * 100:.0f} × {H * 100:.0f} × {depth * 100:.0f} cm (ancho × alto × fondo)")
     return spec, log

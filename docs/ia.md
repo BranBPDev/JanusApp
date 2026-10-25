@@ -26,19 +26,20 @@ flowchart LR
 | Inferencia | Caché de claves/valores, decodificación voraz restringida a fichas del programa; `confianza` = la menor probabilidad de una ficha (< 0,55 → aviso) |
 | Erratas | Una palabra desconocida se sustituye por la conocida más parecida (`roka` → `roja`) |
 
-Entrada del modelo: **fichas de contexto** (cómo es el objeto actual: `vacio`, `esfera_simple`, `esfera_banda`, `tiene_banda`, `tiene_cuerda`, `tiene_cadena`, `tiene_triskel`, `tiene_pinchos`, `tiene_adorno`, `triskel_plano`, `tiene_tallado`, `objeto_libre`; y si hay adjuntos: `img`, `img_frente`, `img_lateral`) + las palabras de la petición. Los colores `#rrggbb` y las medidas («15 cm», «0,3 m», «20mm») no pasan por el modelo: se sustituyen por `<h0>…` y `<n0>…` y el programa los copia.
+Entrada del modelo: **fichas de contexto** (cómo es el objeto actual: `vacio`, `esfera_simple`, `esfera_banda`, `tiene_banda`, `tiene_cuerda`, `tiene_cadena`, `tiene_triskel`, `tiene_pinchos`, `tiene_adorno`, `triskel_plano`, `tiene_tallado`, `objeto_libre`; y si hay adjuntos: `img`, `img_frente`, `img_lateral`, `img_hoja`) + las palabras de la petición. Los colores `#rrggbb` y las medidas («15 cm», «0,3 m», «20mm») no pasan por el modelo: se sustituyen por `<h0>…` y `<n0>…` y el programa los copia.
 
 ## 🧾 El programa
 
 | Orden | Hace |
 |---|---|
 | `nuevo simple` · `nuevo banda` | Esfera de un color · esfera de dos mitades con banda y botón (con su **interior por defecto**) |
-| `starter` | La **starterball**: `nuevo banda` + banda → cuerda roja + tapa dorada + triskel tallado en la tapa. Lo que se nombre después lo cambia |
+| `starter` | La **starterball**: `nuevo banda` + banda → cuerda azul marino (`#000080`) + tapa oliva (`#808000`) + fondo verde (`#008040`) con textura de mar + botón blanco + triskel tallado en la tapa. Lo que se nombre después lo cambia |
 | `diam <n>` · `escalar xK` | Diámetro en metros · factor de tamaño |
 | `color ZONA COL` | Zonas: `tapa fondo banda boton todo cuerda cadena triskel pinchos adorno` |
 | `banda cuerda\|cadena [COL]` | Sustituye la banda por una cuerda/cadena del mismo grosor, con un aro que rodea el botón. Si ya la tiene, solo cambia el color |
 | `a_cuerda` · `a_cadena [COL]` | Convierte las cadenas en cuerdas (o al revés) |
 | `adorno FORMA [COL] [plano] [tallado\|tallado_relieve] [piedra\|madera] [tam <n>] [cant K]` | Formas: `triskel pinchos anillo bola cono cilindro` |
+| `mar ZONA [COL]` | Textura de mar (celdas con líneas claras y sombra, como las cáusticas) en `fondo`, `tapa` o `cuerpo`; sin color conserva el actual |
 | `tallar triskel [tallado\|tallado_relieve] [piedra\|madera] [COL]` | Talla el triskel dibujado en la tapa (si no hay, lo crea) |
 | `quitar adornos\|cuerdas\|cadenas` | Quita relieves |
 | `desde_imagenes [alto <n>]` | Construye el objeto a partir de las imágenes adjuntas |
@@ -75,6 +76,7 @@ Adjunta imágenes (PNG, JPG, JFIF, WEBP, BMP, GIF, TIF, TGA, SVG sencillo) y pid
 Reglas:
 
 - Hacen falta **frente + una lateral**. Con una sola, la otra se estima (elipse) y se avisa.
+- Una **hoja con varias vistas** (una sola imagen apaisada, fondo claro, vistas una al lado de otra) se separa sola: de izquierda a derecha frente, lateral izquierda, arriba, detrás y abajo (con menos vistas, las primeras). Las medidas salen de los píxeles de la hoja; sin altura se usa 0,3 m, así que di «de 70 cm de alto» (los números escritos en la imagen no se leen).
 - Las imágenes **sin nombre de vista** rellenan «frente» y «lateral» si faltan; las demás se ignoran con un aviso.
 - Fotos en perspectiva (3/4) no sirven como vista: la forma sale de siluetas planas.
 - Un **JSON** adjunto se toma como objeto de partida («cambia esto…»).

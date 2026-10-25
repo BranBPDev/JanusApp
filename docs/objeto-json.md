@@ -25,6 +25,7 @@ Un único archivo describe el objeto entero. Lo escribe la IA del chat, se puede
 | `medidas_m` | Sí | `ancho` (X), `alto` (Y), `fondo` (Z) del objeto completo |
 | `texturas` | Sí | Materiales con nombre |
 | `vistas` | Sí | Cómo se ve cada vista: **`frente` y una lateral** como mínimo |
+| `redondeo` | No | `0` (por defecto) = casco visual de las vistas; `2`–`4` redondea las secciones del volumen (lo usan los objetos hechos desde imágenes) |
 | `sombreado` · `contorno` | No | Luz respecto a la cámara · línea alrededor de la silueta de cada vista |
 | `relieves` | No | Piezas que sobresalen de un cuerpo esférico |
 | `marcas` | No | Corte, bisagra, botón, salientes y huesos |
@@ -37,6 +38,7 @@ Un único archivo describe el objeto entero. Lo escribe la IA del chat, se puede
 | Color | `{"color": "#d62d20"}` |
 | Degradado | `{"degradado": {"desde": "#ffffff", "hasta": "#3070e0", "angulo": 90}}` (90° = de abajo a arriba; `"tipo": "radial"` = del centro al borde) |
 | Veta | `{"veta": {"claro": "#eecd9c", "oscuro": "#cda472", "escala_m": 0.012, "semilla": 3}}` |
+| Mar | `{"mar": {"color": "#008040", "escala_m": 0.04, "semilla": 1}}`: celdas irregulares del color con líneas claras y una sombra desplazada |
 
 ## 👁️ Vistas y capas
 

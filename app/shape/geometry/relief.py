@@ -40,7 +40,7 @@ class ReliefMesh:
 
 def flat_color(texture):
     """Color liso que representa una textura (la de color, el principio del degradado o el tono claro de la veta)."""
-    for key in ("color", "desde", "claro"):
+    for key in ("color", "desde", "claro", "base"):
         if key in texture:
             return tuple(int(c) for c in texture[key])
     return (128, 128, 128)

@@ -1,3 +1,4 @@
+import math
 import time
 from dataclasses import dataclass, field
 
@@ -20,7 +21,9 @@ from app.shape.texture.atlas import Atlas
 from app.shape.texture.interior import Interior
 from app.utils.callback_util import invoke_progress
 
-LOD_TOLERANCE = (0.02, 0.04, 0.08, 0.15)   # error medio admitido por nivel (fracción del tamaño del objeto)
+VOLUME_BLUR = 1.2                          # desviación (voxels) del suavizado del casco visual
+ATLAS_CAP = 1024                           # lado máximo de la textura de un volumen (px)
+LOD_TOLERANCE = (0.0012, 0.003, 0.01, 0.04)   # error medio admitido por nivel (fracción del tamaño del objeto)
 PRIMITIVE_GRID_ROUND = ((12, 6), (8, 4), (6, 2), (4, 2))   # (lados, anillos) por nivel
 PRIMITIVE_GRID_SHARP = ((16, 8), (12, 6), (8, 4), (8, 4))
 SHARP_CLEANUP = (0.03, 0.03, 0.05, 0.05)   # une las caras planas redundantes de cajas y cilindros
@@ -38,6 +41,72 @@ class ShapeResult:
     descriptor: dict = None   # objeto paramétrico (esfera/elipsoide): no se guarda ninguna malla
     texture: object = None    # textura que acompaña al descriptor
     marks: dict = field(default_factory=dict)   # marcas del JSON por vista
+
+
+def round_sections(vol, p):
+    """Redondea cada sección horizontal del volumen: cada pieza conexa de la sección se recorta a una superelipse (exponente p) inscrita
+    en su caja. Quita las esquinas del casco visual de los objetos orgánicos sin tocar lo que ya es redondo."""
+    from collections import deque
+    out = vol.copy()
+    nx, ny, nz = vol.shape
+    for y in range(ny):
+        occ = vol[:, y, :] > 0.5
+        if not occ.any():
+            continue
+        lab = np.zeros((nx, nz), np.int32)
+        n = 0
+        for x0, z0 in zip(*np.nonzero(occ)):
+            if lab[x0, z0]:
+                continue
+            n += 1
+            lab[x0, z0] = n
+            q = deque([(x0, z0)])
+            while q:
+                cx, cz = q.popleft()
+                for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                    a, b = cx + dx, cz + dz
+                    if 0 <= a < nx and 0 <= b < nz and occ[a, b] and not lab[a, b]:
+                        lab[a, b] = n
+                        q.append((a, b))
+        factor = np.zeros((nx, nz), np.float32)
+        gx, gz = np.mgrid[0:nx, 0:nz].astype(np.float32)
+        for k in range(1, n + 1):
+            xs, zs = np.nonzero(lab == k)
+            if len(xs) < 6:
+                factor[lab == k] = 1.0
+                continue
+            cx, cz = (xs.min() + xs.max()) / 2, (zs.min() + zs.max()) / 2
+            a, b = (xs.max() - xs.min()) / 2 + 0.75, (zs.max() - zs.min()) / 2 + 0.75
+            r = (np.abs(gx - cx) / a) ** p + (np.abs(gz - cz) / b) ** p
+            soft = np.clip((1 - r ** (1 / p)) * min(a, b) + 0.5, 0, 1)
+            sel = (lab == k) | _grow(lab == k)
+            factor[sel] = np.maximum(factor[sel], soft[sel])
+        out[:, y, :] = vol[:, y, :] * np.where(factor > 0, factor, 0)
+    return out
+
+
+def _grow(m):
+    g = m.copy()
+    g[1:] |= m[:-1]
+    g[:-1] |= m[1:]
+    g[:, 1:] |= m[:, :-1]
+    g[:, :-1] |= m[:, 1:]
+    return g
+
+
+def blur3(vol, sigma):
+    """Desenfoque gaussiano separable de un volumen (suaviza las esquinas del casco visual)."""
+    if sigma <= 0:
+        return vol
+    r = int(math.ceil(3 * sigma))
+    k = np.exp(-0.5 * (np.arange(-r, r + 1) / sigma) ** 2)
+    k /= k.sum()
+    out = vol.astype(np.float32)
+    for ax in range(3):
+        pad = [(r, r) if a == ax else (0, 0) for a in range(3)]
+        p = np.pad(out, pad, mode="edge")
+        out = sum(k[i] * np.take(p, np.arange(i, i + out.shape[ax]), axis=ax) for i in range(len(k)))
+    return out.astype(np.float32)
 
 
 def generate_shape(bp: Blueprint, progress=None) -> ShapeResult:
@@ -100,6 +169,9 @@ def generate_shape(bp: Blueprint, progress=None) -> ShapeResult:
     else:
         shape, cell = grid_shape(dims, RESOLUTION if skeleton is None else RESOLUTION_RIG)
         vol, _ = compose(make_arrays(masks, shape), shape, **flips)
+        if bp.rounding > 0:
+            vol = round_sections(vol, bp.rounding)
+        vol = blur3(vol, VOLUME_BLUR)                          # redondea las esquinas del casco visual
         invoke_progress(progress, 0.2, "Extrayendo superficie...")
         V, F = surface_nets(np.pad(vol, PAD))
         if len(F) == 0:
@@ -125,7 +197,7 @@ def generate_shape(bp: Blueprint, progress=None) -> ShapeResult:
         levels = [refine_mesh(v, f, unit) for v, f in levels]
     invoke_progress(progress, 0.68, "Preparando textura...")
     box_lo = np.array([-ext[0] / 2, 0.0, -ext[2] / 2])
-    atlas = Atlas(images, masks, (box_lo, box_lo + ext), flips)
+    atlas = Atlas(images, masks, (box_lo, box_lo + ext), flips, cap=ATLAS_CAP)
     if opening:
         atlas.add_interior(interior)
     crease = 60.0 if primitive and is_round(primitive) else 40.0

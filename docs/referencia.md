@@ -9,8 +9,8 @@
 | **JSON** | `CANVAS` · `FILL` · `MIN_SIDE_PX` | 640 px · 0,94 · 12 px | `spec/schema` |
 | | `MARGIN` · `INTERIOR_PX` · `FILL_TOLERANCE` | 6 px · 512 px · 3 % | `spec/blueprint` |
 | | `SS` (supermuestreo) | 2 | `spec/raster` |
-| **Forma** | `RESOLUTION` · `RESOLUTION_RIG` · `PAD` | 88 · 128 · 2 | `pipeline` |
-| | `LOD_TOLERANCE` | 0,02 · 0,04 · 0,08 · 0,15 | `pipeline` |
+| **Forma** | `RESOLUTION` · `RESOLUTION_RIG` · `PAD` · `VOLUME_BLUR` · `ATLAS_CAP` | 88 · 128 · 2 · 1,2 vóxeles · 1024 px | `pipeline` |
+| | `LOD_TOLERANCE` | 0,0012 · 0,003 · 0,01 · 0,04 | `pipeline` |
 | | `LOD_TOLERANCE_RIG` | 0,004 · 0,008 · 0,016 · 0,03 | `pipeline` |
 | | `PRIMITIVE_GRID_ROUND` | (12,6) (8,4) (6,2) (4,2) | `pipeline` |
 | | `PRIMITIVE_GRID_SHARP` | (16,8) (12,6) (8,4) (8,4) | `pipeline` |
@@ -30,8 +30,8 @@
 | | Umbral de confianza para avisar | 0,55 | `fast/asistente` |
 | | `MAX_LIT` (colores y medidas por petición) | 6 + 6 | `fast/texto` |
 | | Registro: tamaño máx. antes de rotar | 8 MB | `fast/registro` |
-| **Imágenes** | `SIDE` · `CLUSTERS` · `MERGE_DIST` | 200 px · 6 · 34 | `fast/imagen3d` |
-| | `MIN_BLOB` · `MAX_LAYERS` | 0,4 % · 60 | `fast/imagen3d` |
+| **Imágenes** | `SIDE` · `CLUSTERS` · `MERGE_DIST` | 360 px · 14 · 24 | `fast/imagen3d` |
+| | `MIN_BLOB` · `MAX_LAYERS` · `ORGANIC` | 0,06 % · 220 · 3 | `fast/imagen3d` |
 | | `DEFAULT_HEIGHT` · `DEPTH_GUESS` | 0,3 m · 0,7 | `fast/imagen3d` |
 | **Interfaz** | Ventana · barra lateral | 1280×800 (mín. 1000×650) · 220 px | `main_window` |
 | | Chat · miniatura de Inicio · deshacer | 430 px · 64 px · 30 pasos | `shape_page` · `home_page` · `ai_chat` |
@@ -107,7 +107,7 @@
 | **GLB** | glTF 2.0 binario |
 | **Programa (IA)** | Lista corta de órdenes que escribe el modelo y ejecuta la aplicación |
 | **Ficha de contexto** | Palabra que describe al modelo cómo es el objeto actual |
-| **Starterball** | Macro de la IA: esfera con banda y botón, cuerda roja, tapa dorada y triskel tallado |
+| **Starterball** | Macro de la IA: esfera con banda y botón, cuerda azul marino, tapa oliva, fondo verde con textura de mar y triskel tallado |
 | **Fase** | Etapa de la cadena: forma, texturas, colisión, esqueleto |
 | **Frozen** | Ejecutándose desde el `.exe` (`IS_FROZEN`) |
 
@@ -120,12 +120,12 @@
 
 - **Plataforma**: solo Windows.
 - **IA**: construye con sus piezas o con imágenes; no inventa formas ni lee archivos 3D. Sus aciertos dependen de lo entrenada que esté ([IA integrada](ia.md)).
-- **Imágenes**: hace falta frente + lateral con el nombre de la vista; con una sola se estima la otra; las fotos en perspectiva no valen; los fondos deben ser lisos o transparentes; los agujeros pasantes del objeto se rellenan. El SVG se dibuja de forma sencilla (sin transformaciones).
+- **Imágenes**: hace falta frente + lateral con el nombre de la vista, o una hoja con varias vistas; con una sola se estima la otra; las fotos en perspectiva no valen; los fondos deben ser lisos o transparentes; los agujeros pasantes del objeto se rellenan. El SVG se dibuja de forma sencilla (sin transformaciones).
 - **Tallado**: solo sobre lo dibujado en la textura, no sobre relieves que sobresalen.
 - **Apertura**: eje X fijo y 75°; el corte debe ser un único contorno cerrado; dos piezas huecas con cúpula interior simple; el corte desde el frente solo admite líneas horizontales.
 - **Salientes y relieves**: solo sobre cuerpos esféricos o elípticos; los salientes toman la altura de las siluetas (sin concavidades).
 - **Volumen**: casco visual, sin concavidades que las siluetas no muestren; con pocas vistas sale poco detallado.
-- **Textura**: atlas limitado a 256 px (512 en salientes).
+- **Textura**: atlas de hasta 1024 px por lado en volúmenes (512 en salientes).
 - **Rendimiento**: `qem.py` es Python puro (lo más lento con mallas grandes).
 - **Visor**: por software, con orden de profundidad por triángulo (puede mostrar artefactos).
 - **Paramétricos**: el motor que los use aporta su esfera/elipsoide y UV equirrectangular, o usa el `.glb`.

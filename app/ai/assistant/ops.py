@@ -163,7 +163,7 @@ def band_by(spec, kind, color=None):
     spec["relieves"] += [eq, bt]
     set_margin(spec, h * 0.99)
     for it in (spec.get("marcas") or {}).get("boton", []):
-        it["radio"] = r5(rb + h * 1.2)
+        it["radio"] = r5(rb + h * 0.5)
     return f"banda → {kind} de {h * 1000:.1f} mm"
 
 
@@ -343,11 +343,22 @@ def apply_ops(spec: dict, ops) -> tuple:
             if "color" in tex:
                 log.append(f"textura {name}: {tex['color']} → {new}")
                 tex["color"] = new
+            elif "mar" in tex:
+                log.append(f"textura {name}: mar → color liso {new}")        # un color pedido sustituye la textura (para volver al mar: «con textura de mar»)
+                data["texturas"][name] = {"color": new}
             elif "degradado" in tex:
                 log.append(f"textura {name}: degradado → {new}")
                 tex["degradado"]["desde"] = tex["degradado"]["hasta"] = new
             else:
                 raise SpecError(f"{w}: la textura «{name}» no tiene un color simple.")
+        elif kind == "mar":
+            name = op.get("textura")
+            tex = (data.get("texturas") or {}).get(name)
+            if tex is None:
+                raise SpecError(f"{w}: no existe la textura «{name}». Existen: {', '.join(data.get('texturas', {}))}.")
+            col = hexcolor(op["valor"], f"{w}.valor") if op.get("valor") else (tex.get("color") or (tex.get("mar") or {}).get("color") or "#2f6fb0")
+            data["texturas"][name] = {"mar": {"color": col, "escala_m": r5(max(0.02, 0.3 * radius(data))), "semilla": 3}}
+            log.append(f"textura {name}: mar ({col})")
         elif kind == "escalar":
             k = op.get("factor")
             if isinstance(k, bool) or not isinstance(k, (int, float)) or not 0.05 <= k <= 20:

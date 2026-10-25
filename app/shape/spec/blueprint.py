@@ -30,6 +30,7 @@ class Blueprint:
     marks: Marks
     interiors: dict                              # {'movable'|'fixed': RGBA uint8}
     warnings: list = field(default_factory=list)
+    rounding: float = 0.0                        # «redondeo» del JSON (secciones redondeadas del volumen)
     reliefs: list = field(default_factory=list)  # mallas de los relieves (geometry.relief.ReliefMesh)
 
 
@@ -131,4 +132,4 @@ def build_blueprint(spec: ObjectSpec) -> Blueprint:
         elif kind == "foot":
             marks.footprints[VIEW_KEYS[name]] = value
     interiors = {INTERIOR_KEYS[k]: done[("int", k)] for k in spec.interior}
-    return Blueprint(spec.name, (spec.width, spec.height, spec.depth), views, marks, interiors, warnings, reliefs)
+    return Blueprint(spec.name, (spec.width, spec.height, spec.depth), views, marks, interiors, warnings, spec.rounding, reliefs)

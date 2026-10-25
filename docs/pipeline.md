@@ -70,7 +70,7 @@ fit_primitive(siluetas)  IoU ≥ 0,96 ?
 |---|---|
 | Elipsoide / esfera | Descriptor paramétrico + textura equirrectangular; la malla (96×48) solo se exporta en el `.glb` |
 | Primitiva | `primitive_mesh` regular (lados × anillos por LOD) |
-| Volumen | Surface Nets (rejilla 88; 128 con esqueleto) → Taubin (5 it.) → decimación QEM progresiva |
+| Volumen | Casco visual → (si el JSON trae `redondeo`) cada sección horizontal se recorta a una superelipse por pieza → desenfoque gaussiano (1,2 vóxeles) → Surface Nets (rejilla 88; 128 con esqueleto) → Taubin (5 it.) → decimación QEM progresiva |
 
 El **volumen** es lo que se usa para objetos de forma libre (por ejemplo, los hechos desde imágenes): el casco visual de las siluetas, sin concavidades que las vistas no muestren.
 
@@ -99,7 +99,7 @@ Las `marcas.huesos` (hasta 60, cada una con su punto en una o más vistas) se ll
 
 ## 📉 LODs (`qem`)
 
-Colapso de aristas con error cuádrico (Garland-Heckbert), sin dar la vuelta a triángulos ni crear geometría no-manifold. Volumen: error 0,02 / 0,04 / 0,08 / 0,15 × tamaño, cada nivel desde el anterior. Primitivas: una malla nueva por LOD. Esfera/elipsoide: un solo nivel.
+Colapso de aristas con error cuádrico (Garland-Heckbert), sin dar la vuelta a triángulos ni crear geometría no-manifold. Volumen: error 0,0012 / 0,003 / 0,01 / 0,04 × tamaño, cada nivel desde el anterior. Primitivas: una malla nueva por LOD. Esfera/elipsoide: un solo nivel.
 
 ## 💾 10 · Exportación (`export`, `project`)
 

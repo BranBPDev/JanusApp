@@ -82,6 +82,43 @@ def _noise(xs, ys, seed):
     return (at(0, 0) * (1 - fx) + at(1, 0) * fx) * (1 - fy) + (at(0, 1) * (1 - fx) + at(1, 1) * fx) * fy
 
 
+def _cells(u, v, seed):
+    """(distancia al punto más cercano, a la segunda) de un campo de puntos aleatorios (uno por celda unidad) en (u, v)."""
+    iu, iv = np.floor(u).astype(np.int64), np.floor(v).astype(np.int64)
+    d1 = np.full(u.shape, 9.0, np.float32)
+    d2 = d1.copy()
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            cx, cy = iu + dx, iv + dy
+            h = (cx * 73856093) ^ (cy * 19349663) ^ (seed * 83492791)
+            jx = ((h * 2654435761) % 1000003) / 1000003.0
+            jy = ((h * 40503 + 12345) % 999983) / 999983.0
+            d = np.hypot(cx + 0.15 + 0.7 * jx - u, cy + 0.15 + 0.7 * jy - v).astype(np.float32)
+            d2 = np.minimum(d2, np.maximum(d, d1))
+            d1 = np.minimum(d1, d)
+    return d1, d2
+
+
+def _sea(texture, frame, xx, yy):
+    """Mar visto desde arriba: celdas del color base con líneas claras entre ellas y una sombra desplazada (como las cáusticas del fondo)."""
+    mx, my = frame.meters(xx, yy)
+    k = 1.0 / texture["escala"]
+    base = np.array(texture["base"], np.float32)
+    s = texture["semilla"]
+    u = mx * k + (_noise(mx * k * 0.9, my * k * 0.9, s + 3) - 0.5) * 0.5          # las líneas se curvan un poco
+    v = my * k + (_noise(mx * k * 0.9 + 17, my * k * 0.9, s + 5) - 0.5) * 0.5
+    f1, f2 = _cells(u, v, s)
+    edge = f2 - f1
+    f1s, f2s = _cells(u + 0.1, v - 0.13, s)                                         # sombra: las mismas líneas desplazadas
+    shadow = np.clip(1 - (f2s - f1s) / 0.3, 0, 1) ** 1.5
+    width = 0.045 + 0.05 * _noise(u * 1.3, v * 1.3, s + 9)                           # grosor irregular
+    line = np.clip((width - edge) / 0.03, 0, 1)
+    out = base * (1 - 0.35 * shadow[..., None])
+    white = base * 0.12 + 255 * 0.88
+    out = out * (1 - line[..., None]) + white * line[..., None]
+    return np.clip(out, 0, 255)
+
+
 def paint(texture, frame: Frame, box):
     """Color (alto, ancho, 3) de una textura sobre la zona 'box' = (x0, y0, x1, y1) (píxeles, incluidos) del frame."""
     x0, y0, x1, y1 = box
@@ -98,6 +135,8 @@ def paint(texture, frame: Frame, box):
         half = max(abs(d[0]) * w / 2 + abs(d[1]) * h / 2, 1e-6)
         t = np.clip(((xx - (x0 + x1) / 2) * d[0] + (yy - (y0 + y1) / 2) * d[1]) / (2 * half) + 0.5, 0, 1)[..., None]
         return np.array(texture["desde"], np.float32) * (1 - t) + np.array(texture["hasta"], np.float32) * t
+    if texture.get("mar"):
+        return _sea(texture, frame, xx, yy)
     mx, my = frame.meters(xx, yy)                                       # veta: estrías verticales onduladas, en metros
     u, s = mx / texture["escala"], texture["semilla"]
     g = np.sin(2 * np.pi * (u + (_noise(u * 0.7, my / texture["escala"] * 0.12, s) - 0.5) * 0.9)) * 0.5 + 0.5

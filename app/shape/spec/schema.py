@@ -8,13 +8,15 @@ Estructura (todas las medidas en METROS):
 
 {
   "formato": "janus.objeto/1",
+  "redondeo": 3,                                  # (opcional) redondea las secciones del volumen: 0 = casco visual; 2-4 = organico
   "nombre": "pokeball",
   "medidas_m": {"ancho": 0.2, "alto": 0.2, "fondo": 0.2},
   "texturas": {                                   # materiales con nombre
     "rojo":  {"color": "#d62d20"},
     "cielo": {"degradado": {"desde": "#ffffff", "hasta": "#3070e0", "angulo": 90}},       # 90° = de abajo a arriba
     "foco":  {"degradado": {"desde": "#ffffff", "hasta": "#303030", "tipo": "radial"}},   # del centro al borde
-    "madera": {"veta": {"claro": "#eecd9c", "oscuro": "#cda472", "escala_m": 0.012, "semilla": 3}}
+    "madera": {"veta": {"claro": "#eecd9c", "oscuro": "#cda472", "escala_m": 0.012, "semilla": 3}},
+    "agua":   {"mar": {"color": "#008040", "escala_m": 0.04, "semilla": 1}}                # cáusticas del mar: celdas con líneas claras y sombra
   },
   "sombreado": {"luz": [-0.45, 0.6, 0.65], "base": 0.66, "intensidad": 0.4},    # opcional; luz respecto a la cámara
   "contorno": {"color": "#1c1c22", "grosor_m": 0.0015},                          # opcional (silueta de cada vista)
@@ -115,7 +117,11 @@ def _texture(name, t):
         v = t["veta"]
         return {"claro": parse_color(v.get("claro"), where + ".claro"), "oscuro": parse_color(v.get("oscuro"), where + ".oscuro"),
                 "escala": max(float(v.get("escala_m", 0.012)), 1e-4), "semilla": int(v.get("semilla", 1))}
-    raise SpecError(f"{where}: falta «color», «degradado» o «veta».")
+    if "mar" in t:
+        m = t["mar"]
+        return {"mar": True, "base": parse_color(m.get("color"), where + ".color"), "escala": max(float(m.get("escala_m", 0.04)), 1e-4),
+                "semilla": int(m.get("semilla", 1))}
+    raise SpecError(f"{where}: falta «color», «degradado», «veta» o «mar».")
 
 
 class ObjectSpec:
@@ -135,6 +141,12 @@ class ObjectSpec:
             raise SpecError(f"Las proporciones son demasiado extremas: la medida menor ({min(dims):g} m) es más de "
                             f"{FILL * CANVAS / MIN_SIDE_PX:.0f} veces menor que la mayor ({max(dims):g} m).")
         self.textures = {k: _texture(k, t) for k, t in (data.get("texturas") or {}).items()}
+        try:
+            self.rounding = float(data.get("redondeo") or 0)         # (opcional) 0 = casco visual tal cual; 2–4 redondea las secciones (objetos orgánicos)
+        except (TypeError, ValueError):
+            raise SpecError("«redondeo» debe ser un número (0 = sin redondear, 2 a 4 = secciones redondeadas).")
+        if not 0 <= self.rounding <= 12:
+            raise SpecError("«redondeo» debe estar entre 0 y 12.")
         self.light = data.get("sombreado") or {}
         self.outline = data.get("contorno")
         if self.outline:
