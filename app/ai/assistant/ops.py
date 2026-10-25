@@ -155,8 +155,8 @@ def band_by(spec, kind, color=None):
     spec["relieves"] = [r for r in spec.get("relieves", []) if r.get("textura") != name]
     y0 = (h / 2 + 0.0003) / (1 + h / (2 * R))
     ring_eq = math.sqrt(R * R - y0 * y0)
-    rho = rb + h * 0.2
-    hole = r5(_chord(R, rho + h / 2) * 0.9)
+    rho = rb + h * 0.3
+    hole = r5(_chord(R, rho + h * 0.3))
     eq = {"tipo": kind, "textura": name, "radio_m": r5(R), "eje": [0, 1, 0], "radio_aro_m": r5(ring_eq), **_rope_params(R, h, kind, ring_eq),
           "hueco": {"eje": [0, 0, 1], "radio_m": hole}}
     bt = {"tipo": kind, "textura": name, "radio_m": r5(R), "eje": [0, 0, 1], "radio_aro_m": r5(rho), **_rope_params(R, h, kind, rho)}
@@ -231,13 +231,16 @@ def add_ornament(spec, shape, color=None, size=None, count=None, kind_color_from
         if flat:      # dibujado en la textura de la tapa (vista de arriba), sin relieve
             cx, cy = spec["medidas_m"]["ancho"] / 2, spec["medidas_m"]["fondo"] / 2
             arm = triskel_arm(size)
+            arms = []
             for k in range(3):
                 a = math.radians(120 * k)
-                pts = [[r5(cx + x * math.cos(a) - y * math.sin(a)), r5(cy + x * math.sin(a) + y * math.cos(a))] for x, y in arm]
-                layer = {"textura": "triskel", "forma": "linea", "puntos": pts, "grosor": r5(size * 0.09)}
-                if carve:
-                    layer["tallado"] = dict(carve)
-                top.append(layer)
+                arms.append([[r5(cx + x * math.cos(a) - y * math.sin(a)), r5(cy + x * math.sin(a) + y * math.cos(a))] for x, y in arm])
+            # una sola línea continua: del final del brazo 1 al centro, al final del brazo 2, de vuelta al centro (sobre el mismo trazo) y al brazo 3
+            pts = arms[0][::-1] + arms[1] + arms[1][::-1][1:] + arms[2][1:]
+            layer = {"textura": "triskel", "forma": "linea", "puntos": pts, "grosor": r5(size * 0.09)}
+            if carve:
+                layer["tallado"] = dict(carve)
+            top.append(layer)
             how = "tallado en la tapa" + (f" ({carve['tipo']}, {carve['grano']})" if carve.get("grano") else f" ({carve['tipo']})") if carve else "dibujado en la tapa (sin relieve)"
             return f"triskel de {size * 100:.0f} cm {how}"
         width, rise = r5(size * 0.09), r5(size * 0.06)

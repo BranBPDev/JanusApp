@@ -59,7 +59,7 @@ Colores: 15 base (`rojo azul verde amarillo naranja morado rosa negro blanco gri
 
 - **Color por defecto = el de la superficie donde se talla** (la tapa). Si pides otro («tallado en rojo»), usa ese. Si luego cambias el color de la tapa, el tallado lo sigue mientras no hayas pedido otro.
 - Grano opcional: `piedra` o `madera`.
-- Se aplica a lo **dibujado en la textura** (el triskel plano). Un triskel que sobresale (geometría) no se talla: si pides «tallado», se dibuja en la tapa.
+- Se aplica a lo **dibujado en la textura** (el triskel plano). Un triskel que sobresale (geometría) no se talla: si pides «tallado», se dibuja en la tapa. El triskel es **una sola línea continua** (una capa `linea`), no tres espirales unidas: el tallado no deja costuras.
 - En el JSON: `"tallado": {"tipo": "grabado|relieve", "profundidad", "ancho_m", "grano"}` en cualquier capa dibujada ([formato](objeto-json.md)).
 
 ## 🖼️ Objetos a partir de imágenes y archivos

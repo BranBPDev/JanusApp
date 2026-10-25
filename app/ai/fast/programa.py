@@ -42,7 +42,7 @@ def state(spec) -> list:
     if not spec:
         return ["vacio"]
     tex = spec.get("texturas", {})
-    out = ["esfera_banda" if "tapa" in tex else "esfera_simple"]
+    out = ["esfera_banda" if "tapa" in tex else ("esfera_simple" if "cuerpo" in tex else "objeto_libre")]
     if any(c.get("textura") == "banda" for v in spec.get("vistas", {}).values() for c in v.get("capas", [])):
         out.append("tiene_banda")
     rel = spec.get("relieves", [])
@@ -122,7 +122,9 @@ def run(spec, prog, hexes=(), nums=(), fuentes=None, pedidos=None):
 
     def asked(t, pos):
         """¿Pidió el usuario este color? (los literales y los de una macro siempre valen)"""
-        return pedidos is None or pos in free or t.startswith("<h") or t.split("_")[0] in pedidos
+        if t.startswith("<h"):
+            return int(t[2:-1]) < len(hexes)       # un literal que el usuario no escribió no existe: se ignora
+        return pedidos is None or pos in free or t.split("_")[0] in pedidos
 
     def optional_color():
         nonlocal i
