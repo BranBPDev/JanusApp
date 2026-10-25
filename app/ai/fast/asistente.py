@@ -74,6 +74,14 @@ def palette(path, k=6) -> list:
     return [vision._hex(cent[i]) for i in (tapa, fondo, dark, boton)]
 
 
+def _wide(path) -> bool:
+    try:
+        w, h = imagen3d.open_image(path).size
+        return w / h >= imagen3d.SHEET_MIN_ASPECT
+    except Exception:
+        return False
+
+
 class Asistente:
     def __init__(self, model_path):
         self.model = FastModel(model_path)
@@ -110,6 +118,8 @@ class Asistente:
         ctx = programa.state(base)
         if images:
             ctx += ["img"] + (["img_frente"] if "frente" in views else []) + (["img_lateral"] if views & {"lateral", "izquierda", "derecha"} else [])
+            if any(not imagen3d.view_of(p) and _wide(p) for p in images):
+                ctx.append("img_hoja")                  # una sola imagen apaisada sin nombre de vista: suele ser una hoja con varias vistas
         prog = self.model.generate(ctx, words)
         vocab = self.model.vocab
         said = bases_in(w if w.startswith("<") else vocab.itos[vocab.word(w)] for w in words)
