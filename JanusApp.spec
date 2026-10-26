@@ -1,5 +1,18 @@
 # -*- mode: python ; coding: utf-8 -*-
+import os
 from PyInstaller.utils.hooks import collect_submodules
+
+
+def _todos_los_modulos(raiz='app'):
+    # Recorre el disco: incluye también los módulos de carpetas sin __init__.py (collect_submodules los omite).
+    mods = set(collect_submodules(raiz))
+    for d, _, fs in os.walk(raiz):
+        for f in fs:
+            if f.endswith('.py'):
+                ruta = os.path.join(d, f[:-3]).replace(os.sep, '.')
+                mods.add(ruta[:-9] if ruta.endswith('.__init__') else ruta)
+    return sorted(mods)
+
 
 # Un único .exe (onefile). Se descartan los componentes de Qt que la aplicación no usa para reducir la descarga.
 
@@ -8,7 +21,7 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[('app/assets', 'app/assets')],
-    hiddenimports=collect_submodules('app'),   # todos los módulos de la aplicación (también los que solo se importan desde otros)
+    hiddenimports=_todos_los_modulos('app'),   # todos los módulos de la aplicación, con o sin __init__.py
     hookspath=[],
     runtime_hooks=[],
     excludes=['tkinter', 'numpy.f2py', 'PIL.ImageTk'],
