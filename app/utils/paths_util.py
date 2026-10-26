@@ -36,6 +36,7 @@ LOGO_PNG = ASSETS_DIR / "logo.png"
 LOGO_ICO = ASSETS_DIR / "logo.ico"
 UPDATE_SCRIPT = ASSETS_DIR / "scripts" / "update.ps1"
 FAST_MODEL = ASSETS_DIR / "ia" / "janus_ia.npz"     # IA integrada (viaja dentro del .exe)
+CATALOG_DB = ASSETS_DIR / "ia" / "janus_catalogo.db"   # catálogo SQLite: colores, zonas, formas, órdenes y plantillas que conoce la IA
 
 # En el .exe la versión viaja en app/data (dentro del zip del release); en desarrollo se lee del version.json de la raíz.
 VERSION_JSON = DATA_DIR / "version.json" if IS_FROZEN else BASE_DIR / "version.json"

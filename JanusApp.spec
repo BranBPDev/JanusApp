@@ -1,4 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
+from PyInstaller.utils.hooks import collect_submodules
+
 # Un único .exe (onefile). Se descartan los componentes de Qt que la aplicación no usa para reducir la descarga.
 
 a = Analysis(
@@ -6,7 +8,7 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[('app/assets', 'app/assets')],
-    hiddenimports=[],
+    hiddenimports=collect_submodules('app'),   # todos los módulos de la aplicación (también los que solo se importan desde otros)
     hookspath=[],
     runtime_hooks=[],
     excludes=['tkinter', 'numpy.f2py', 'PIL.ImageTk'],

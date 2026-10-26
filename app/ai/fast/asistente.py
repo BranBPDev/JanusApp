@@ -7,13 +7,13 @@ from pathlib import Path
 import numpy as np
 
 from app.ai.assistant import vision
-from app.ai.fast import imagen3d, programa, registro
+from app.ai.fast import catalogo, imagen3d, programa, registro
 from app.ai.fast.colores import bases_in
 from app.ai.fast.modelo import FastModel
 from app.ai.fast.texto import prepare
 from app.shape.spec.schema import FORMAT, SpecError
 
-IMAGE_EXT = imagen3d.IMAGE_EXT | imagen3d.VECTOR_EXT
+IMAGE_EXT = imagen3d.IMAGE_EXT | imagen3d.VECTOR_EXT | imagen3d.malla3d.MODEL_EXT
 
 
 @dataclass
@@ -86,6 +86,19 @@ class Asistente:
     def __init__(self, model_path):
         self.model = FastModel(model_path)
 
+    @staticmethod
+    def _reference(words):
+        """Nombre de la referencia registrada que se nombra en el texto (o None)."""
+        try:
+            refs = catalogo.referencias()
+        except Exception:
+            return None
+        text = " " + " ".join(words) + " "
+        for name, (aliases, *_rest) in refs.items():
+            if any(f" {n} " in text for n in [name] + aliases):
+                return name
+        return None
+
     def pedir(self, text, spec, adjuntos=(), **_) -> Resultado:
         t0 = time.perf_counter()
         avisos, colors, base, images = [], [], spec, []
@@ -105,9 +118,11 @@ class Asistente:
                     avisos.append(f"{Path(path).name} no es un JSON válido.")
             else:
                 avisos.append(f"No sé leer {Path(path).name}: adjunta imágenes (PNG, JPG, SVG…) o un JSON de objeto.")
-        views = {imagen3d.view_of(p) for p in images}
-        if images:                                   # colores de la imagen de frente (o de la primera)
-            ref = next((p for p in images if imagen3d.view_of(p) == "frente"), images[0])
+        models = [p for p in images if Path(p).suffix.lower() in imagen3d.malla3d.MODEL_EXT]
+        pics = [p for p in images if p not in models]
+        views = {imagen3d.view_of(p) for p in pics}
+        if pics:                                     # colores de la imagen de frente (o de la primera)
+            ref = next((p for p in pics if imagen3d.view_of(p) == "frente"), pics[0])
             try:
                 colors = palette(ref)
             except Exception:
@@ -118,15 +133,20 @@ class Asistente:
         ctx = programa.state(base)
         if images:
             ctx += ["img"] + (["img_frente"] if "frente" in views else []) + (["img_lateral"] if views & {"lateral", "izquierda", "derecha"} else [])
-            if any(not imagen3d.view_of(p) and _wide(p) for p in images):
+            if any(not imagen3d.view_of(p) and _wide(p) for p in pics):
                 ctx.append("img_hoja")                  # una sola imagen apaisada sin nombre de vista: suele ser una hoja con varias vistas
+            if models:
+                ctx.append("img_modelo")
+        known = self._reference(words)
+        if known:
+            ctx.append("ref")                           # el texto nombra un objeto registrado en el catálogo (tabla referencias)
         prog = self.model.generate(ctx, words)
         vocab = self.model.vocab
         said = bases_in(w if w.startswith("<") else vocab.itos[vocab.word(w)] for w in words)
         names = [Path(a).name for a in adjuntos]
         lit = {"hex": hexes, "medidas_m": [round(n, 4) for n in nums]}
         try:
-            new, log = programa.run(base, prog, hexes, nums, {"imagenes": images}, said)
+            new, log = programa.run(base, prog, hexes, nums, {"imagenes": images, "referencia": known}, said)
         except Exception as e:     # SpecError o cualquier fallo al montar las piezas: se registra para poder corregir a la IA
             registro.peticion(text, ctx, prog, False, f"{type(e).__name__}: {e}", self.model.confidence, adjuntos=names,
                               ms=(time.perf_counter() - t0) * 1000, literales=lit)

@@ -36,8 +36,9 @@ def _pow2(n: int) -> int:
 class Atlas:
     """Una sola textura con las vistas colocadas como 'charts' + bloques de color plano (interior y base)."""
 
-    def __init__(self, images, masks, bbox, flips=None, cap=256):
+    def __init__(self, images, masks, bbox, flips=None, cap=256, bias=None):
         self.flips = flips or {}
+        self.bias = bias or {}                      # peso por vista al elegir el chart de cada cara (1 = igual; <1 = se usa menos)
         lo, hi = bbox
         self.lo = np.asarray(lo, np.float64)
         self.ext = np.maximum(np.asarray(hi, np.float64) - self.lo, 1e-9)
@@ -130,7 +131,8 @@ class Atlas:
         n = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
         n /= np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-30)
         dirs = np.array([CHARTS[k] for k in self.keys], np.float64)
-        best = np.argmax(n @ dirs.T, axis=1)
+        weight = np.array([self.bias.get(k, 1.0) for k in self.keys])
+        best = np.argmax((n @ dirs.T) * weight, axis=1)
         under = (n[:, 1] < -0.5) & ("bottom" not in self.keys)
         uvs = np.zeros((len(F), 3, 2))
         for ci, k in enumerate(self.keys):

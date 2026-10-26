@@ -22,6 +22,7 @@ from app.shape.texture.interior import Interior
 from app.utils.callback_util import invoke_progress
 
 VOLUME_BLUR = 1.2                          # desviación (voxels) del suavizado del casco visual
+CHART_BIAS = {"left": 0.8, "right": 0.8, "top": 0.8, "bottom": 0.8}   # objetos orgánicos: delante y detrás mandan, para no duplicar detalles (ojos)
 ATLAS_CAP = 1024                           # lado máximo de la textura de un volumen (px)
 LOD_TOLERANCE = (0.0012, 0.003, 0.01, 0.04)   # error medio admitido por nivel (fracción del tamaño del objeto)
 PRIMITIVE_GRID_ROUND = ((12, 6), (8, 4), (6, 2), (4, 2))   # (lados, anillos) por nivel
@@ -197,7 +198,7 @@ def generate_shape(bp: Blueprint, progress=None) -> ShapeResult:
         levels = [refine_mesh(v, f, unit) for v, f in levels]
     invoke_progress(progress, 0.68, "Preparando textura...")
     box_lo = np.array([-ext[0] / 2, 0.0, -ext[2] / 2])
-    atlas = Atlas(images, masks, (box_lo, box_lo + ext), flips, cap=ATLAS_CAP)
+    atlas = Atlas(images, masks, (box_lo, box_lo + ext), flips, cap=ATLAS_CAP, bias=CHART_BIAS if bp.rounding > 0 else None)
     if opening:
         atlas.add_interior(interior)
     crease = 60.0 if primitive and is_round(primitive) else 40.0

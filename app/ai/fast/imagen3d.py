@@ -13,6 +13,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 from app.ai.assistant import vision
+from app.ai.fast import malla3d
 from app.shape.spec.schema import FORMAT, SpecError
 
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".jfif", ".bmp", ".webp", ".gif", ".tif", ".tiff", ".tga"}
@@ -522,11 +523,42 @@ def assign(paths):
     return chosen, notes
 
 
-def build(paths, height=None, name="objeto"):
-    """(spec, cambios) de las imágenes dadas. 'height' en metros (por defecto 0,3)."""
+def _recolor(source, mask):
+    """Imagen RGBA con la forma 'mask' y los colores de 'source' = (rgb, máscara) estirados a ella (el fondo se rellena con el color del borde)."""
+    from app.shape.texture.atlas import extend_colors
+    rgb, smask = source
+    full = extend_colors(np.dstack([rgb, np.zeros(smask.shape, np.float32)]), smask, iters=max(rgb.shape[:2]) + 5)
+    img = Image.fromarray(np.clip(full, 0, 255).astype(np.uint8)).resize((mask.shape[1], mask.shape[0]), Image.LANCZOS)
+    return Image.fromarray(np.dstack([np.asarray(img), (mask * 255).astype(np.uint8)]), "RGBA")
+
+
+def _from_mesh(path, colors, log):
+    """{vista: (imagen RGBA, (ancho_px, alto_px))} con las siluetas de un modelo 3d, pintadas con los colores de las imágenes dadas."""
+    masks, ext = malla3d.silhouettes(path)
+    log.append(f"{Path(path).name}: modelo 3d de {ext[0]:.1f} × {ext[2]:.1f} × {ext[1]:.1f} (ancho × alto × fondo, en unidades del archivo); la forma sale de él.")
+    mean = lambda src: np.array([src[0][src[1]][:, c].mean() for c in range(3)])
+    base = colors.get("frente") or next(iter(colors.values()), None)
+    out = {}
+    for v, mask in masks.items():
+        src = colors.get(v)
+        if src is None and v in ("izquierda", "derecha") and ("derecha" if v == "izquierda" else "izquierda") in colors:
+            rgb, m = colors["derecha" if v == "izquierda" else "izquierda"]
+            src = (rgb[:, ::-1], m[:, ::-1])                   # la otra lateral, reflejada
+        if src is None and base is not None:
+            src = (np.broadcast_to(mean(base), (8, 8, 3)).astype(np.float32), np.ones((8, 8), bool))
+        if src is None:
+            src = (np.full((8, 8, 3), (150, 170, 160), np.float32), np.ones((8, 8), bool))
+        out[v] = (_recolor(src, mask), (mask.shape[1], mask.shape[0]))
+    return out
+
+
+def build(paths, height=None, name="objeto", width_m=None, depth_m=None):
+    """(spec, cambios) de las imágenes dadas. 'height', 'width_m' y 'depth_m' en metros: el alto por defecto es 0,3 y, si no se dan,
+    ancho y fondo salen de las proporciones de las imágenes; si se dan, cada vista se ajusta a esas medidas."""
+    models = [p for p in paths if Path(p).suffix.lower() in malla3d.MODEL_EXT]
     files = [p for p in paths if Path(p).suffix.lower() in IMAGE_EXT | VECTOR_EXT]
-    if not files:
-        raise SpecError("No hay imágenes que usar: adjunta al menos una vista de frente y otra lateral (PNG, JPG, SVG…).")
+    if not files and not models:
+        raise SpecError("No hay imágenes ni modelos que usar: adjunta al menos una vista de frente y otra lateral (PNG, JPG, SVG…) o un modelo .stl.")
     sheet, log0 = {}, []
     for p in list(files):
         if not view_of(p):
@@ -539,6 +571,11 @@ def build(paths, height=None, name="objeto"):
     chosen, log = assign(files)
     log = log0 + log
     chosen = {v: p for v, p in chosen.items() if v not in sheet}
+    if models:                                                 # la forma sale del modelo 3d; las imágenes (si hay) aportan los colores
+        colors = {v: object_mask(open_image(p)) for v, p in chosen.items()}
+        colors.update({v: object_mask(im) for v, (im, _) in sheet.items()})
+        sheet = _from_mesh(models[0], colors, log0)
+        chosen = {}
     if not chosen and not sheet:
         raise SpecError("Ninguna imagen se puede usar como vista; ponle «frente» o «lateral» en el nombre del archivo.")
     H = float(height or DEFAULT_HEIGHT)
@@ -562,6 +599,10 @@ def build(paths, height=None, name="objeto"):
         side_px = next((sheet[v][1][0] for v in ("derecha", "izquierda") if v in sheet), None)
         depth = side_px * k if side_px else width * DEPTH_GUESS
         side = depth / H
+    if width_m:
+        width = float(width_m)
+    if depth_m:
+        depth = float(depth_m)
     guessed = []
     if "frente" not in ratios and "detras" not in ratios:
         guessed.append("frente")
@@ -572,10 +613,21 @@ def build(paths, height=None, name="objeto"):
         k = H / sheet.get("frente", next(iter(sheet.values())))[1][1]
         for v, (_, (pw, ph)) in sheet.items():
             if v in ("frente", "detras", "izquierda", "derecha"):
-                dims[v] = (pw * k, H if abs(ph * k - H) < 0.06 * H else ph * k)
+                ref_w = width if v in ("frente", "detras") else depth
+                dims[v] = (ref_w if abs(pw * k - ref_w) < 0.06 * ref_w else pw * k, H if abs(ph * k - H) < 0.06 * H else ph * k)
             else:                                              # cenital: ancho × fondo (se ajusta si difiere poco de las otras vistas)
                 near = lambda a, b: b if abs(a - b) < 0.1 * b else a
                 dims[v] = (near(pw * k, width), near(ph * k, depth))
+    if width_m or depth_m:                                    # medidas pedidas: cada vista se ajusta a su caja
+        for v in dims:
+            w, h = dims[v]
+            if v in ("frente", "detras"):
+                w = width
+            elif v in ("izquierda", "derecha"):
+                w = depth
+            else:
+                w, h = width, depth
+            dims[v] = (w, h)
     textures, views = {}, {}
     for v, im in ims.items():
         w, h = dims[v]

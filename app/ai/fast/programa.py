@@ -2,21 +2,16 @@
 import copy
 
 from app.ai.assistant import ejemplos, ops
-from app.ai.fast import imagen3d
+from app.ai.fast import catalogo, imagen3d
 from app.shape.spec.schema import SpecError
 
 SHADES = {"": 1.0, "_claro": None, "_oscuro": None}
-BASE = {"rojo": "#d32f2f", "azul": "#1e63d6", "verde": "#2e9e4f", "amarillo": "#f4d51f", "naranja": "#f28c1b", "morado": "#7b3fb5",
-        "rosa": "#f28ab4", "negro": "#1b1b1f", "blanco": "#f4f4f4", "gris": "#8d8f98", "marron": "#7a4a26", "dorado": "#d9a928",
-        "plateado": "#c4c8d0", "turquesa": "#22c7c7", "beige": "#e6d5b0"}
-FIXED = {"negro_claro": "#4a4a52", "negro_oscuro": "#0b0b0d", "blanco_oscuro": "#cfcfcf", "blanco_claro": "#ffffff",
-         "dorado_oscuro": "#b8891f", "dorado_claro": "#ecd68a",
-         "starter_cuerda": "#000080", "starter_tapa": "#808000", "starter_mar": "#008040"}      # los colores de la starterball
-STARTER = ("nuevo banda banda cuerda starter_cuerda color tapa starter_tapa color fondo starter_mar mar fondo adorno triskel tallado").split()   # la «starterball», como la definió el usuario
+BASE = catalogo.colores_base()                    # colores base (tabla colores del catálogo)
+FIXED = catalogo.colores_fijos()                  # tonos fijos y colores de las plantillas
+STARTER = catalogo.plantilla("starter")           # la «starterball», como la definió el usuario (tabla plantillas)
 ORNAMENTS = {"triskel", "pinchos", "adorno"}
-SLOT_TEXTURE = {"tapa": "tapa", "fondo": "fondo", "banda": "banda", "boton": "cierre", "cuerda": "cuerda", "cadena": "cadena",
-                "triskel": "triskel", "pinchos": "pinchos", "adorno": "adorno"}
-FORMS = {"triskel", "pinchos", "anillo", "bola", "cono", "cilindro"}
+SLOT_TEXTURE = catalogo.zonas()                   # zona -> textura del JSON (tabla zonas)
+FORMS = catalogo.formas()                         # formas de adorno (tabla formas)
 
 
 def color_hex(name: str, hexes) -> str:
@@ -141,7 +136,7 @@ def run(spec, prog, hexes=(), nums=(), fuentes=None, pedidos=None):
     while i < len(toks):
         op = toks[i]
         i += 1
-        if op not in ("nuevo", "starter", "desde_imagenes", "pedir_imagenes") and not data:
+        if op not in ("nuevo", "starter", "desde_imagenes", "desde_referencia", "pedir_imagenes") and not data:
             raise SpecError("Todavía no hay ningún objeto: pídeme primero uno («hazme una esfera con banda y botón»).")
         if op == "starter":                              # macro: se sustituye por sus órdenes
             toks[i:i] = STARTER
@@ -149,16 +144,33 @@ def run(spec, prog, hexes=(), nums=(), fuentes=None, pedidos=None):
         elif op == "pedir_imagenes":
             raise SpecError("Eso no lo puedo construir con mis piezas (esferas, bandas, cuerdas, cadenas, adornos). Adjunta imágenes con el nombre de la vista "
                             "(«frente», «lateral», «detras»…) o un JSON del objeto y lo hago a partir de ellos.")
-        elif op == "desde_imagenes":
-            height = None
+        elif op == "desde_referencia":                   # objeto registrado en el catálogo con los archivos del usuario
+            name = (fuentes or {}).get("referencia")
+            if not name:
+                raise SpecError("No tengo registrado ese objeto. Adjunta imágenes (o un modelo .stl) o regístralo en el catálogo (tabla referencias).")
+            data = catalogo.referencia_objeto(name)
+            log.append(f"objeto «{name}» desde el catálogo")
             if i < len(toks) and toks[i] == "alto":
-                height = _num(toks[i + 1] if i + 1 < len(toks) else "", nums, "alto")
+                val = _num(toks[i + 1] if i + 1 < len(toks) else "", nums, "alto")
+                i += 2
+                data, _ = ops.apply_ops(data, [{"op": "escalar", "factor": val / float(data["medidas_m"]["alto"])}])
+                log.append(f"alto → {val * 100:.0f} cm")
+        elif op == "desde_imagenes":
+            height = width = depth = None
+            while i < len(toks) and toks[i] in ("alto", "ancho", "fondo"):
+                val = _num(toks[i + 1] if i + 1 < len(toks) else "", nums, toks[i])
+                if toks[i] == "alto":
+                    height = val
+                elif toks[i] == "ancho":
+                    width = val
+                else:
+                    depth = val
                 i += 2
             paths = (fuentes or {}).get("imagenes") or []
             if not paths:
                 raise SpecError("Para hacer un objeto a partir de imágenes adjunta al menos una de frente y otra lateral "
                                 "(que el nombre del archivo diga «frente», «lateral»…).")
-            data, notes = imagen3d.build(paths, height)
+            data, notes = imagen3d.build(paths, height, width_m=width, depth_m=depth)
             log += notes
         elif op == "nuevo":
             kind = take("simple", "banda")
