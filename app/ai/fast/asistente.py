@@ -12,6 +12,7 @@ from app.ai.fast.colores import bases_in
 from app.ai.fast.modelo import FastModel
 from app.ai.fast.texto import prepare
 from app.shape.spec.schema import FORMAT, SpecError
+from app.utils.mask_util import border, flood
 
 IMAGE_EXT = imagen3d.IMAGE_EXT | imagen3d.VECTOR_EXT | imagen3d.malla3d.MODEL_EXT
 
@@ -31,22 +32,7 @@ class Resultado:
 
 def _background(rgb, alpha):
     """Máscara del fondo: transparente, o píxeles claros conectados con el borde de la imagen."""
-    h, w = alpha.shape
-    light = (rgb.min(-1) > 235) | (alpha < 40)
-    bg = np.zeros((h, w), bool)
-    bg[0, :] = bg[-1, :] = bg[:, 0] = bg[:, -1] = True
-    bg &= light
-    for _ in range(h + w):                      # propagación desde el borde
-        grow = bg.copy()
-        grow[1:] |= bg[:-1]
-        grow[:-1] |= bg[1:]
-        grow[:, 1:] |= bg[:, :-1]
-        grow[:, :-1] |= bg[:, 1:]
-        grow &= light
-        if (grow == bg).all():
-            break
-        bg = grow
-    return bg
+    return flood(border(alpha.shape), (rgb.min(-1) > 235) | (alpha < 40))
 
 
 def palette(path, k=6) -> list:

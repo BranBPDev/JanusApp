@@ -15,6 +15,7 @@ from PIL import Image, ImageDraw
 from app.ai.assistant import vision
 from app.ai.fast import malla3d
 from app.shape.spec.schema import FORMAT, SpecError
+from app.utils.mask_util import border, dilate, flood
 
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".jfif", ".bmp", ".webp", ".gif", ".tif", ".tiff", ".tga"}
 VECTOR_EXT = {".svg"}
@@ -191,25 +192,6 @@ def open_image(path) -> Image.Image:
 
 
 # ---------------------------------------------------------------- máscara y contorno ----------
-def _grow(bg, free):
-    grow = bg.copy()
-    grow[1:] |= bg[:-1]
-    grow[:-1] |= bg[1:]
-    grow[:, 1:] |= bg[:, :-1]
-    grow[:, :-1] |= bg[:, 1:]
-    return grow & free
-
-
-def _flood(seed, free):
-    bg = seed & free
-    for _ in range(sum(free.shape)):
-        nxt = _grow(bg, free)
-        if (nxt == bg).all():
-            break
-        bg = nxt
-    return bg
-
-
 def _otsu(values, lo, hi):
     hist, edges = np.histogram(values, bins=48, range=(0, max(values.max(), 1)))
     best, thr, w0, s0, tot, sum_all = 0.0, lo, 0.0, 0.0, hist.sum(), (hist * (edges[:-1] + edges[1:]) / 2).sum()
@@ -268,9 +250,7 @@ def object_mask(im: Image.Image):
         bgc = np.median(ring, axis=0)
         dist = np.sqrt(((rgb - bgc) ** 2).sum(-1))
         thr = _otsu(dist[dist > 0] if (dist > 0).any() else dist, 16, 70)
-        seed = np.zeros(dist.shape, bool)
-        seed[0, :] = seed[-1, :] = seed[:, 0] = seed[:, -1] = True
-        mask = ~_flood(seed, dist < thr)
+        mask = ~flood(border(dist.shape), dist < thr)
     mask = _largest(mask)
     ys, xs = np.nonzero(mask)
     if len(xs) < 80:
@@ -282,17 +262,6 @@ def object_mask(im: Image.Image):
 # ---------------------------------------------------------------- hojas con varias vistas ----------
 SHEET_ORDER = ("frente", "izquierda", "arriba", "detras", "abajo")     # orden habitual de una hoja de vistas, de izquierda a derecha
 SHEET_MIN_ASPECT = 1.5
-
-
-def _dilate(m, n):
-    for _ in range(n):
-        g = m.copy()
-        g[1:] |= m[:-1]
-        g[:-1] |= m[1:]
-        g[:, 1:] |= m[:, :-1]
-        g[:, :-1] |= m[:, 1:]
-        m = g
-    return m
 
 
 def split_sheet(im: Image.Image):
@@ -308,7 +277,7 @@ def split_sheet(im: Image.Image):
     bg = (mn > 200) & (mx - mn < 60)                         # blanco, cuadrícula pálida
     sat = (mx - mn) / np.maximum(mx, 1)
     core = (sat > 0.22) & ~bg
-    lab, n = _label(_dilate(core, 3))
+    lab, n = _label(dilate(core, 3))
     if n == 0:
         return []
     sizes = np.bincount(lab.ravel(), minlength=n + 1)
@@ -332,7 +301,7 @@ def split_sheet(im: Image.Image):
     for view, (x0, x1, ids) in zip(SHEET_ORDER, groups):
         region = np.isin(lab, ids)
         mask = region & ~bg
-        filled = ~_flood(_edge(mask), ~mask)                   # rellena los huecos cerrados (ojos, interior)
+        filled = ~flood(border(mask.shape), ~mask)                   # rellena los huecos cerrados (ojos, interior)
         ys, xs = np.nonzero(filled)
         if len(xs) < 80:
             return []
@@ -343,12 +312,6 @@ def split_sheet(im: Image.Image):
         rgba = np.dstack([np.asarray(im)[sl], (full[sl] * 255).astype(np.uint8)])
         out.append((view, Image.fromarray(rgba, "RGBA"), (rgba.shape[1], rgba.shape[0])))
     return out
-
-
-def _edge(mask):
-    e = np.zeros_like(mask)
-    e[0, :] = e[-1, :] = e[:, 0] = e[:, -1] = True
-    return e
 
 
 _RING = ((0, -1), (-1, -1), (-1, 0), (-1, 1), (0, 1), (1, 1), (1, 0), (1, -1))
@@ -460,10 +423,6 @@ def color_regions(rgb, mask):
 
 
 # ---------------------------------------------------------------- vista → capas ----------
-def _hex(c):
-    return "#%02x%02x%02x" % tuple(int(round(v)) for v in c)
-
-
 def view_layers(im, prefix, w_m=None, h_m=None):
     """(texturas, capas, relación ancho/alto) de una imagen. Si se dan w_m y h_m se escala a esa caja; si no, a alto 1."""
     rgb, mask = object_mask(im)
@@ -473,7 +432,7 @@ def view_layers(im, prefix, w_m=None, h_m=None):
     w_m, h_m = (w_m, h_m) if w_m else (ratio, 1.0)
     sx, sy = w_m / max(W - 1, 1), h_m / max(H - 1, 1)
     conv = lambda poly: [[round(float(x * sx), 5), round(float((H - 1 - y) * sy), 5)] for x, y in poly]
-    textures = {f"{prefix}{i + 1}": {"color": _hex(c)} for i, c in enumerate(colors)}
+    textures = {f"{prefix}{i + 1}": {"color": vision._hex(c)} for i, c in enumerate(colors)}
     layers = [{"textura": f"{prefix}1", "forma": "poligono", "puntos": conv(simplify(outline(mask), 220)), "silueta": True}]
     blobs = []
     total = int(mask.sum())
@@ -634,7 +593,8 @@ def build(paths, height=None, name="objeto", width_m=None, depth_m=None):
         t, layers, _ = view_layers(im, f"{v[:3]}_", w, h)
         textures.update(t)
         views[v] = {"capas": layers}
-        log.append(f"{v} ← {Path(chosen[v]).name if v in chosen else "hoja"}: silueta de {len(layers[0]['puntos'])} puntos y {len(t)} colores")
+        origin = Path(chosen[v]).name if v in chosen else "hoja"
+        log.append(f"{v} ← {origin}: silueta de {len(layers[0]['puntos'])} puntos y {len(t)} colores")
     base_of = lambda v: next(iter(t for t in textures if t.startswith(f"{v[:3]}_")))
     if "frente" not in views and "detras" not in views:       # sin frontal: elipse con el color principal de la lateral
         views["frente"] = {"capas": [{"textura": base_of(next(iter(ims))), "forma": "elipse", "centro": [width / 2, H / 2], "radios": [width / 2, H / 2], "silueta": True}]}
