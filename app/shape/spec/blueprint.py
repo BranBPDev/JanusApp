@@ -40,6 +40,7 @@ def _view(spec: ObjectSpec, name, reliefs=()):
     frame = Frame.around(w, h, MARGIN, spec.ppm)
     rgb, sil = draw_layers(spec.textures, spec.light, spec.views[name]["capas"], frame)
     outline = parse_color(spec.outline.get("color", "#1c1c22"), "contorno") if spec.outline else None
+    line = spec.outline.get("grosor_m", 0.0015) * frame.k / 2 if spec.outline else 0
     rel = draw_reliefs(reliefs, VIEW_KEYS[name], (spec.width, spec.height, spec.depth), frame)
     body = None
     if rel is not None:
@@ -48,9 +49,9 @@ def _view(spec: ObjectSpec, name, reliefs=()):
         rgb[mask_r] = rgb_r[mask_r]
         sil = sil | mask_r
         if outline:
-            rgb[edge(mask_r, spec.outline.get("grosor_m", 0.0015) * frame.k / 2) & mask_r] = outline
-    if spec.outline:
-        rgb[edge(sil, spec.outline.get("grosor_m", 0.0015) * frame.k / 2) & sil] = parse_color(spec.outline.get("color", "#1c1c22"), "contorno")
+            rgb[edge(mask_r, line) & mask_r] = outline
+    if outline:
+        rgb[edge(sil, line) & sil] = outline
     rgba = downsample(rgb, sil)
     box = (slice(MARGIN, rgba.shape[0] - MARGIN), slice(MARGIN, rgba.shape[1] - MARGIN))
     mask = rgba[..., 3] >= 128

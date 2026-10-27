@@ -30,33 +30,34 @@ def make_arrays(masks: dict, shape):
     return {k: _resample(m, *size[k]) for k, m in masks.items()}
 
 
-def compose(arrays: dict, shape, fl=False, fr=False, ft=False, fb=False):
-    """Casco visual suave: mínimo de las siluetas proyectadas. Devuelve (volumen[x,y,z], objetivos)."""
-    nx, ny, nz = shape
-    vol = np.ones(shape, np.float32)
-    targets = []  # (array en ejes del mundo, eje de proyección)
-
-    def add(t, axis):
-        nonlocal vol
-        targets.append((t, axis))
-        vol = np.minimum(vol, np.expand_dims(t, axis))
-
+def view_targets(arrays: dict, fl=False, fr=False, ft=False, fb=False):
+    """Silueta de cada vista en los ejes del mundo: lista de (array 2D, eje por el que se proyecta)."""
+    t = []
     if "front" in arrays:
-        add(arrays["front"][::-1].T, 2)
+        t.append((arrays["front"][::-1].T, 2))
     if "back" in arrays:
-        add(arrays["back"][::-1, ::-1].T, 2)
+        t.append((arrays["back"][::-1, ::-1].T, 2))
     if "right" in arrays:
         r = arrays["right"][::-1]
-        add(r[:, ::-1] if fr else r, 0)
+        t.append((r[:, ::-1] if fr else r, 0))
     if "left" in arrays:
         l = arrays["left"][::-1, ::-1]
-        add(l[:, ::-1] if fl else l, 0)
+        t.append((l[:, ::-1] if fl else l, 0))
     if "top" in arrays:
-        t = arrays["top"]
-        add((t[::-1] if ft else t).T, 1)
+        a = arrays["top"]
+        t.append(((a[::-1] if ft else a).T, 1))
     if "bottom" in arrays:   # por defecto el frente del objeto está en la parte superior de la imagen
-        t = arrays["bottom"]
-        add((t if fb else t[::-1]).T, 1)
+        a = arrays["bottom"]
+        t.append(((a if fb else a[::-1]).T, 1))
+    return t
+
+
+def compose(arrays: dict, shape, **flips):
+    """Casco visual suave: mínimo de las siluetas proyectadas. Devuelve (volumen[x,y,z], objetivos)."""
+    vol = np.ones(shape, np.float32)
+    targets = view_targets(arrays, **flips)
+    for t, axis in targets:
+        vol = np.minimum(vol, np.expand_dims(t, axis))
     return vol, targets
 
 

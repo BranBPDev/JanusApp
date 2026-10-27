@@ -20,6 +20,7 @@ from app.shape.spec.blueprint import Blueprint
 from app.shape.texture.atlas import Atlas
 from app.shape.texture.interior import Interior
 from app.utils.callback_util import invoke_progress
+from app.utils.mask_util import grow, label
 
 VOLUME_BLUR = 1.2                          # desviación (voxels) del suavizado del casco visual
 CHART_BIAS = {"left": 0.8, "right": 0.8, "top": 0.8, "bottom": 0.8}   # objetos orgánicos: delante y detrás mandan, para no duplicar detalles (ojos)
@@ -47,28 +48,13 @@ class ShapeResult:
 def round_sections(vol, p):
     """Redondea cada sección horizontal del volumen: cada pieza conexa de la sección se recorta a una superelipse (exponente p) inscrita
     en su caja. Quita las esquinas del casco visual de los objetos orgánicos sin tocar lo que ya es redondo."""
-    from collections import deque
     out = vol.copy()
     nx, ny, nz = vol.shape
     for y in range(ny):
         occ = vol[:, y, :] > 0.5
         if not occ.any():
             continue
-        lab = np.zeros((nx, nz), np.int32)
-        n = 0
-        for x0, z0 in zip(*np.nonzero(occ)):
-            if lab[x0, z0]:
-                continue
-            n += 1
-            lab[x0, z0] = n
-            q = deque([(x0, z0)])
-            while q:
-                cx, cz = q.popleft()
-                for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-                    a, b = cx + dx, cz + dz
-                    if 0 <= a < nx and 0 <= b < nz and occ[a, b] and not lab[a, b]:
-                        lab[a, b] = n
-                        q.append((a, b))
+        lab, n = label(occ)
         factor = np.zeros((nx, nz), np.float32)
         gx, gz = np.mgrid[0:nx, 0:nz].astype(np.float32)
         for k in range(1, n + 1):
@@ -80,19 +66,10 @@ def round_sections(vol, p):
             a, b = (xs.max() - xs.min()) / 2 + 0.75, (zs.max() - zs.min()) / 2 + 0.75
             r = (np.abs(gx - cx) / a) ** p + (np.abs(gz - cz) / b) ** p
             soft = np.clip((1 - r ** (1 / p)) * min(a, b) + 0.5, 0, 1)
-            sel = (lab == k) | _grow(lab == k)
+            sel = (lab == k) | grow(lab == k)
             factor[sel] = np.maximum(factor[sel], soft[sel])
         out[:, y, :] = vol[:, y, :] * np.where(factor > 0, factor, 0)
     return out
-
-
-def _grow(m):
-    g = m.copy()
-    g[1:] |= m[:-1]
-    g[:-1] |= m[1:]
-    g[:, 1:] |= m[:, :-1]
-    g[:, :-1] |= m[:, 1:]
-    return g
 
 
 def blur3(vol, sigma):

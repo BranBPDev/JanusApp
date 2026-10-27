@@ -5,7 +5,7 @@ from app.shape.geometry.mesh_ops import build_attributes, crease_normals
 from app.shape.geometry.primitive import primitive_mesh
 from app.shape.geometry.protrusion import assign_sides
 from app.shape.model import Model, Part
-from app.shape.texture.atlas import CHARTS, NEUTRAL, extend_colors
+from app.shape.texture.atlas import CHARTS, extend_colors, interior_color
 
 TEX_WIDTH = 512
 STRIP = 8          # filas extra con los colores planos del interior (si no hay texturas interiores)
@@ -64,11 +64,6 @@ def bake_equirect(images, masks, ext, flips=None, width: int = TEX_WIDTH, frames
     tex = np.full((h, w, 4), 255, np.uint8)
     tex[..., :3] = np.clip(acc / np.maximum(total[..., None], 1e-6), 0, 255).astype(np.uint8)
     return tex
-
-
-def _interior(mean):
-    mean = NEUTRAL if mean is None else np.asarray(mean, np.float64)
-    return np.clip(0.25 * mean + 0.75 * NEUTRAL, 0, 255)
 
 
 def _equirect_uvs(V, F, ext, center=None):
@@ -139,14 +134,14 @@ def preview_model(ext, texture, opening, interior=None, center=None, extras=None
 
     textured = split is not None and interior is not None and interior.any
     if textured:
-        flat = {k: _interior(colors.get(k)) for k in ("movable", "fixed")}
+        flat = {k: interior_color(colors.get(k)) for k in ("movable", "fixed")}
         tex, (su, sv) = interior.attach(base_tex, flat)
         interior_uv = {k: interior.flat_uv(k) for k in ("movable", "fixed")}
         scale = np.array([su, sv])
     else:
         strip = np.full((STRIP, W, 4), 255, np.uint8)
-        strip[:, : W // 2, :3] = _interior(colors.get("movable")).astype(np.uint8)
-        strip[:, W // 2:, :3] = _interior(colors.get("fixed")).astype(np.uint8)
+        strip[:, : W // 2, :3] = interior_color(colors.get("movable")).astype(np.uint8)
+        strip[:, W // 2:, :3] = interior_color(colors.get("fixed")).astype(np.uint8)
         tex = np.vstack([base_tex, strip])
         mid_v = (H + STRIP / 2) / (H + STRIP)
         interior_uv = {"movable": (0.25, mid_v), "fixed": (0.75, mid_v), "body": (0.75, mid_v)}
@@ -205,6 +200,6 @@ def descriptor(ext_m, opening_info=None, opening=None, scale=1.0, triangles=0, c
                 "radius": round(float(opening["button"]["radius"]) * scale, 5),
                 "note": "disco en la cara frontal (z > 0): pertenece entero a la parte móvil y deja su hueco en la fija",
             },
-            "interior_color": {k: np.round(_interior(v)).astype(int).tolist() for k, v in opening_info["colors"].items()},
+            "interior_color": {k: np.round(interior_color(v)).astype(int).tolist() for k, v in opening_info["colors"].items()},
         }
     return out

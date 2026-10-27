@@ -6,11 +6,12 @@ sobresalen y con qué forma en planta, de modo que el resultado no se rompe en b
 import numpy as np
 
 from app.shape.geometry.coords import VIEW_AXES
-from app.shape.geometry.field import compose, grid_shape, make_arrays
+from app.shape.geometry.field import compose, grid_shape, make_arrays, view_targets
 from app.shape.geometry.mesh_ops import remove_small_components, taubin_smooth
 from app.shape.geometry.qem import decimate
 from app.shape.geometry.surface_nets import surface_nets
 from app.shape.texture.atlas import Atlas
+from app.utils.mask_util import dilate, erode
 
 MIN_INLIERS = 0.8        # fracción mínima del contorno que debe encajar en la elipse del cuerpo
 MAX_EXTRAS = 0.25        # los salientes no pueden ser más del 25 % del volumen (si no, no es «un cuerpo con salientes»)
@@ -115,42 +116,6 @@ def fit_core(masks: dict, dims, flips: dict):
     return {"center": center, "semi": np.array(semi), "frames": frames, "inliers": float(np.mean(inliers))}
 
 
-def _dilate(vol, n):
-    for _ in range(n):
-        g = vol.copy()
-        g[1:] |= vol[:-1]; g[:-1] |= vol[1:]
-        g[:, 1:] |= vol[:, :-1]; g[:, :-1] |= vol[:, 1:]
-        g[:, :, 1:] |= vol[:, :, :-1]; g[:, :, :-1] |= vol[:, :, 1:]
-        vol = g
-    return vol
-
-
-def _erode(vol, n):
-    return ~_dilate(~vol, n)
-
-
-def _targets(arrays, flips):
-    """Siluetas proyectadas en ejes del mundo: lista de (array 2D, eje de proyección). Misma convención que compose()."""
-    t = []
-    if "front" in arrays:
-        t.append((arrays["front"][::-1].T, 2))
-    if "back" in arrays:
-        t.append((arrays["back"][::-1, ::-1].T, 2))
-    if "right" in arrays:
-        r = arrays["right"][::-1]
-        t.append((r[:, ::-1] if flips.get("fr") else r, 0))
-    if "left" in arrays:
-        l = arrays["left"][::-1, ::-1]
-        t.append((l[:, ::-1] if flips.get("fl") else l, 0))
-    if "top" in arrays:
-        a = arrays["top"]
-        t.append(((a[::-1] if flips.get("ft") else a).T, 1))
-    if "bottom" in arrays:
-        a = arrays["bottom"]
-        t.append(((a if flips.get("fb") else a[::-1]).T, 1))
-    return t
-
-
 def _local(targets, box):
     """Volumen (bool) de la intersección de siluetas extruidas dentro de la caja de índices (i0,i1,j0,j1,k0,k1)."""
     i0, i1, j0, j1, k0, k1 = box
@@ -171,7 +136,7 @@ def _components(mask, limit=12):
         seed = np.zeros(mask.shape, bool)
         seed[tuple(np.argwhere(rest)[0])] = True
         for _ in range(400):
-            grown = _dilate(seed, 1) & rest
+            grown = dilate(seed, 1) & rest
             if (grown == seed).all():
                 break
             seed = grown
@@ -205,16 +170,16 @@ def build_extras(masks, images, fp_masks, dims, flips, core, progress=None):
             vol, _ = compose({key: arr_k}, shape, **flips)
             union |= vol > 0.5
         out &= union
-    out = _dilate(_erode(out, 1), 1)
+    out = dilate(erode(out, 1), 1)
     if out.sum() < 4 or out.sum() > MAX_EXTRAS * (hull > 0.5).sum():
         return None
-    comps = _components(_dilate(out, 1) & (hull > 0.5))
+    comps = _components(dilate(out, 1) & (hull > 0.5))
 
     # 2) pasada fina por saliente
     fshape, _ = grid_shape(dims, RESOLUTION)
     fcell = np.array(dims, np.float64) / np.array(fshape)
-    fine_targets = _targets(make_arrays(masks, fshape), flips)
-    fp_targets = [_targets({k: v}, flips)[0] for k, v in make_arrays(fp_masks, fshape).items()] if fp_masks else []
+    fine_targets = view_targets(make_arrays(masks, fshape), **flips)
+    fp_targets = [view_targets({k: v}, **flips)[0] for k, v in make_arrays(fp_masks, fshape).items()] if fp_masks else []
     fvox = float(fcell.max())
     meshes = []
     for comp in comps:
@@ -235,7 +200,7 @@ def build_extras(masks, images, fp_masks, dims, flips, core, progress=None):
             for t, axis in fp_targets:
                 un |= _local([(t, axis)], box)
             sel &= un
-        sel = _dilate(_erode(sel, 1), 1)
+        sel = dilate(erode(sel, 1), 1)
         if sel.sum() < 200:
             continue
         idx = np.argwhere(sel)

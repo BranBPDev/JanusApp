@@ -229,8 +229,7 @@ class ObjectSpec:
                 s = r.get("tamano_m", [0.03, 0.03, 0.02])
                 if not (isinstance(s, list) and len(s) == 3 and all(isinstance(c, (int, float)) and not isinstance(c, bool) and c > 0 for c in s)):
                     raise SpecError(f"{where}: «tamano_m» debe ser [este-oeste, norte-sur, altura] en metros, todos mayores que 0.")
-                if r.get("copias", 1) > 200 or int(r.get("copias", 1)) != r.get("copias", 1):
-                    raise SpecError(f"{where}: «copias» debe ser un entero de 1 a 200.")
+                self._check_copies(r, where)
             elif r["tipo"] == "trazo":
                 cv = r.get("curvas")
                 ok = isinstance(cv, list) and 1 <= len(cv) <= MAX_CURVES and all(
@@ -239,8 +238,7 @@ class ObjectSpec:
                     for c in cv)
                 if not ok:
                     raise SpecError(f"{where}: «curvas» debe ser una lista de 1 a {MAX_CURVES} curvas, cada una con 2 a {MAX_POINTS} puntos [x, y] en metros.")
-                if r.get("copias", 1) > 200 or int(r.get("copias", 1)) != r.get("copias", 1):
-                    raise SpecError(f"{where}: «copias» debe ser un entero de 1 a 200.")
+                self._check_copies(r, where)
             elif r["tipo"] == "malla":
                 vs, fs = r.get("vertices"), r.get("caras")
                 ok = (isinstance(vs, list) and 4 <= len(vs) <= MAX_MESH and all(isinstance(q, list) and len(q) == 3 and all(
@@ -249,6 +247,11 @@ class ObjectSpec:
                     raise SpecError(f"{where}: «vertices» debe ser una lista de 4 a {MAX_MESH} puntos [este, norte, fuera] en metros.")
                 if not (isinstance(fs, list) and fs and all(isinstance(q, list) and len(q) == 3 and all(isinstance(i, int) and 0 <= i < len(vs) for i in q) for q in fs)):
                     raise SpecError(f"{where}: «caras» debe ser una lista de triángulos [i, j, k] con índices de «vertices».")
+
+    @staticmethod
+    def _check_copies(r, where):
+        if r.get("copias", 1) > 200 or int(r.get("copias", 1)) != r.get("copias", 1):
+            raise SpecError(f"{where}: «copias» debe ser un entero de 1 a 200.")
 
     @staticmethod
     def _check_chain(r, where):

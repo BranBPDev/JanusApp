@@ -29,6 +29,12 @@ def extend_colors(rgba: np.ndarray, mask: np.ndarray, iters: int = 10) -> np.nda
     return np.clip(color, 0, 255).astype(np.uint8)
 
 
+def interior_color(mean):
+    """Color liso del interior de una pieza: el medio de su exterior muy aclarado hacia el neutro."""
+    mean = NEUTRAL if mean is None else np.asarray(mean, np.float64)
+    return 0.25 * mean + 0.75 * NEUTRAL
+
+
 def _pow2(n: int) -> int:
     return 1 << max(5, int(np.ceil(np.log2(max(n, 1)))))
 
@@ -100,13 +106,8 @@ class Atlas:
 
     def paint_blocks(self, moving_color, fixed_color, under_color):
         """Colores planos: interior de la pieza móvil, interior de la fija y cara inferior sin vista."""
-        for (by, x), c in zip(self._blocks, (self._interior(moving_color), self._interior(fixed_color), under_color)):
+        for (by, x), c in zip(self._blocks, (interior_color(moving_color), interior_color(fixed_color), under_color)):
             self.texture[by:by + BLOCK, x:x + BLOCK, :3] = np.clip(np.asarray(c, np.float64), 0, 255).astype(np.uint8)
-
-    @staticmethod
-    def _interior(mean):
-        mean = NEUTRAL if mean is None else np.asarray(mean, np.float64)
-        return 0.25 * mean + 0.75 * NEUTRAL
 
     @property
     def moving_uv(self):

@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 
 from app.shape.spec.schema import SpecError
+from app.utils.mask_util import border, dilate, erode, flood
 
 MODEL_EXT = {".stl"}
 SIDE = 420                 # píxeles del lado mayor de cada silueta
@@ -31,31 +32,9 @@ def load_stl(path) -> np.ndarray:
 
 
 def _cover(mask, n=2):
-    """Cierra los huecos de una silueta hecha de puntos: dilatar, rellenar lo cerrado y volver a erosionar."""
-    def grow(m):
-        g = m.copy()
-        g[1:] |= m[:-1]
-        g[:-1] |= m[1:]
-        g[:, 1:] |= m[:, :-1]
-        g[:, :-1] |= m[:, 1:]
-        return g
-    m = mask
-    for _ in range(n):
-        m = grow(m)
-    # relleno: lo que no se alcanza desde el borde está dentro
-    out = np.zeros_like(m)
-    out[0, :] = out[-1, :] = out[:, 0] = out[:, -1] = True
-    free = ~m
-    out &= free
-    for _ in range(sum(m.shape)):
-        nxt = grow(out) & free
-        if (nxt == out).all():
-            break
-        out = nxt
-    m = ~out
-    for _ in range(n):
-        m = ~grow(~m)
-    return m
+    """Cierra los huecos de una silueta hecha de puntos: dilatar, rellenar lo cerrado (lo que no se alcanza desde el borde) y volver a erosionar."""
+    m = dilate(mask, n)
+    return erode(~flood(border(m.shape), ~m), n)
 
 
 def silhouettes(path):

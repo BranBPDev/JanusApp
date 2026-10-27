@@ -6,7 +6,6 @@ Pillow, en una fracción de segundo por imagen."""
 import re
 import unicodedata
 import xml.etree.ElementTree as ET
-from collections import deque
 from pathlib import Path
 
 import numpy as np
@@ -15,7 +14,7 @@ from PIL import Image, ImageDraw
 from app.ai.assistant import vision
 from app.ai.fast import malla3d
 from app.shape.spec.schema import FORMAT, SpecError
-from app.utils.mask_util import border, dilate, flood
+from app.utils.mask_util import border, dilate, flood, label
 
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".jfif", ".bmp", ".webp", ".gif", ".tif", ".tiff", ".tga"}
 VECTOR_EXT = {".svg"}
@@ -206,30 +205,8 @@ def _otsu(values, lo, hi):
     return float(min(max(thr * 0.6, lo), hi))
 
 
-def _label(mask):
-    """(etiquetas, cuántas): componentes conexas (8 vecinos) de una máscara."""
-    h, w = mask.shape
-    lab = np.zeros((h, w), np.int32)
-    n = 0
-    for y, x in zip(*np.nonzero(mask)):
-        if lab[y, x]:
-            continue
-        n += 1
-        lab[y, x] = n
-        q = deque([(y, x)])
-        while q:
-            cy, cx = q.popleft()
-            for dy in (-1, 0, 1):
-                for dx in (-1, 0, 1):
-                    ny, nx = cy + dy, cx + dx
-                    if 0 <= ny < h and 0 <= nx < w and mask[ny, nx] and not lab[ny, nx]:
-                        lab[ny, nx] = n
-                        q.append((ny, nx))
-    return lab, n
-
-
 def _largest(mask):
-    lab, n = _label(mask)
+    lab, n = label(mask, diagonal=True)
     if n <= 1:
         return mask
     sizes = np.bincount(lab.ravel())[1:]
@@ -277,7 +254,7 @@ def split_sheet(im: Image.Image):
     bg = (mn > 200) & (mx - mn < 60)                         # blanco, cuadrícula pálida
     sat = (mx - mn) / np.maximum(mx, 1)
     core = (sat > 0.22) & ~bg
-    lab, n = _label(dilate(core, 3))
+    lab, n = label(dilate(core, 3), diagonal=True)
     if n == 0:
         return []
     sizes = np.bincount(lab.ravel(), minlength=n + 1)
@@ -437,7 +414,7 @@ def view_layers(im, prefix, w_m=None, h_m=None):
     blobs = []
     total = int(mask.sum())
     for i in range(len(colors)):
-        comp, n = _label(lab == i)
+        comp, n = label(lab == i, diagonal=True)
         for j in range(1, n + 1):
             sel = comp == j
             area = int(sel.sum())

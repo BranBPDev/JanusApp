@@ -1,10 +1,15 @@
 import numpy as np
 
 
-def unique_edges(F: np.ndarray) -> np.ndarray:
+def _edge_keys(F: np.ndarray):
+    """(aristas ordenadas (3m, 2), clave única de cada una) de una malla de triángulos."""
     e = np.concatenate([F[:, [0, 1]], F[:, [1, 2]], F[:, [2, 0]]])
     e.sort(axis=1)
-    key = e[:, 0].astype(np.int64) * (int(e.max()) + 1) + e[:, 1]
+    return e, e[:, 0].astype(np.int64) * (int(e.max()) + 1) + e[:, 1]
+
+
+def unique_edges(F: np.ndarray) -> np.ndarray:
+    e, key = _edge_keys(F)
     _, idx = np.unique(key, return_index=True)
     return e[idx]
 
@@ -59,10 +64,7 @@ def taubin_smooth(V: np.ndarray, F: np.ndarray, iters: int, lam: float = 0.5, mu
 
 
 def is_watertight(F: np.ndarray) -> bool:
-    e = np.concatenate([F[:, [0, 1]], F[:, [1, 2]], F[:, [2, 0]]])
-    e.sort(axis=1)
-    key = e[:, 0].astype(np.int64) * (int(e.max()) + 1) + e[:, 1]
-    return bool((np.unique(key, return_counts=True)[1] == 2).all())
+    return bool((np.unique(_edge_keys(F)[1], return_counts=True)[1] == 2).all())
 
 
 def crease_normals(V: np.ndarray, F: np.ndarray, angle_deg: float = 40.0) -> np.ndarray:

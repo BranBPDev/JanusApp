@@ -2,18 +2,14 @@ import math
 
 import numpy as np
 
-from app.shape.rig.skeleton import pose_frames, skin_vertices, swing_rotations
+from app.shape.rig.skeleton import pose_frames, rotation_matrix, skin_vertices, swing_rotations
 
 _LIGHT = np.array([-0.4, 0.6, 0.7]) / np.linalg.norm([-0.4, 0.6, 0.7])
 _DEFAULT = np.array([170.0, 178.0, 214.0])
 
 
 def rotation(axis, degrees):
-    a = np.array(axis, np.float64)
-    a /= np.linalg.norm(a)
-    t = math.radians(degrees)
-    k = np.array([[0, -a[2], a[1]], [a[2], 0, -a[0]], [-a[1], a[0], 0]])
-    return np.eye(3) + math.sin(t) * k + (1 - math.cos(t)) * (k @ k)
+    return rotation_matrix(axis, math.radians(degrees))
 
 
 class Scene:

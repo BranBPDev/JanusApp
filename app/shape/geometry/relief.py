@@ -46,6 +46,13 @@ def flat_color(texture):
     return (128, 128, 128)
 
 
+def _outward(V, F, centers):
+    """Caras con la normal hacia fuera: gira las que apuntan hacia dentro ('centers' = un punto interior o uno por cara)."""
+    out = np.einsum("ij,ij->i", np.cross(V[F[:, 1]] - V[F[:, 0]], V[F[:, 2]] - V[F[:, 0]]), V[F].mean(axis=1) - centers)
+    F[out < 0] = F[out < 0][:, ::-1]
+    return F
+
+
 def _strip(center, radius, tilt, width, rise, margin, side):
     t = math.radians(tilt)
     a = np.array([side * math.cos(t), math.sin(t), 0.0])          # dirección del círculo máximo más alta
@@ -73,8 +80,7 @@ def _strip(center, radius, tilt, width, rise, margin, side):
             a_, b_, c_, d_ = ix(j, i), ix(j, i + 1), ix(j + 1, i + 1), ix(j + 1, i)
             F += [(a_, b_, c_), (a_, c_, d_)]
     F = np.array(F, np.int64)
-    out = np.einsum("ij,ij->i", np.cross(V[F[:, 1]] - V[F[:, 0]], V[F[:, 2]] - V[F[:, 0]]), V[F].mean(axis=1) - center)
-    F[out < 0] = F[out < 0][:, ::-1]
+    F = _outward(V, F, center)
     walls = []
 
     def side_wall(pairs, inner_of):
@@ -114,9 +120,7 @@ def _tube(points, binormal, radius, sides=TUBE_SIDES):
             F += [(a, b, c), (a, c, d)]
     F = np.array(F, np.int64)
     centers = np.repeat(points, sides, axis=0)
-    out = np.einsum("ij,ij->i", np.cross(V[F[:, 1]] - V[F[:, 0]], V[F[:, 2]] - V[F[:, 0]]), V[F].mean(axis=1) - centers[F[:, 0]])
-    F[out < 0] = F[out < 0][:, ::-1]
-    return V, F
+    return V, _outward(V, F, centers[F[:, 0]])
 
 
 def _unit(v):
@@ -124,30 +128,40 @@ def _unit(v):
     return v / np.linalg.norm(v)
 
 
+def _ring_frame(axis, radius, ring):
+    """(eje unitario, u, v, base): el círculo de radio 'ring' perpendicular a 'axis' sobre una esfera de radio 'radius' está en base + ring·(cos·u + sin·v)."""
+    axis = _unit(axis)
+    helper = np.array([0.0, 1.0, 0.0]) if abs(axis[1]) < 0.9 else np.array([1.0, 0.0, 0.0])
+    u = _unit(np.cross(axis, helper))
+    return axis, u, np.cross(axis, u), axis * math.sqrt(radius ** 2 - ring ** 2)
+
+
+def _open_arc(base, u, v, ring, hole):
+    """(ángulo inicial, longitud) del arco del aro que queda fuera de 'hole' = (punto de la esfera, distancia); None si el hueco no lo corta."""
+    grid = np.linspace(0, 2 * math.pi, 4096, endpoint=False)
+    pts = base + ring * (np.cos(grid)[:, None] * u + np.sin(grid)[:, None] * v)
+    free = np.linalg.norm(pts - hole[0], axis=1) >= hole[1]
+    if not free.any() or free.all():
+        return None
+    start = int(np.argmax(free & ~np.roll(free, 1)))            # primer punto libre tras el hueco
+    free = np.roll(free, -start)
+    return grid[start], np.nonzero(free)[0].max() * (grid[1] - grid[0])
+
+
 def _chain(center, radius, axis, ring, count, length, width, wire, hole=None):
     """Cadena de eslabones ovalados alrededor de la esfera: sigue el círculo de radio 'ring' perpendicular a 'axis' (el eje
     de la esfera que pasa por su centro). Los eslabones se alternan: uno tumbado sobre la superficie y otro de canto.
     'hole' = (punto de la esfera, distancia): la cadena queda abierta alrededor de ese punto y sus dos extremos terminan justo en el borde del hueco."""
     r = wire / 2
-    axis = _unit(axis)
-    helper = np.array([0.0, 1.0, 0.0]) if abs(axis[1]) < 0.9 else np.array([1.0, 0.0, 0.0])
-    u = _unit(np.cross(axis, helper))
-    v = np.cross(axis, u)
-    base = axis * math.sqrt(radius ** 2 - ring ** 2)
+    axis, u, v, base = _ring_frame(axis, radius, ring)
     a, b = length / 2 - r, width / 2 - r
     phi = np.linspace(0, 2 * math.pi, LINK_SAMPLES, endpoint=False)
     angles = [2 * math.pi * i / count for i in range(count)]
-    if hole is not None:       # cadena abierta: va de un borde del hueco al otro, con el primer y el último eslabón justo en ellos
-        grid = np.linspace(0, 2 * math.pi, 4096, endpoint=False)
-        pts = base + ring * (np.cos(grid)[:, None] * u + np.sin(grid)[:, None] * v)
-        free = np.linalg.norm(pts - hole[0], axis=1) >= hole[1]
-        if free.any() and not free.all():
-            start = int(np.argmax(free & ~np.roll(free, 1)))            # primer punto libre tras el hueco
-            free = np.roll(free, -start)
-            first = grid[start]
-            span = (np.nonzero(free)[0].max()) * (grid[1] - grid[0])
-            n_arc = max(2, round(span / (2 * math.pi) * count) + 1)
-            angles = [first + span * i / (n_arc - 1) for i in range(n_arc)]
+    arc = None if hole is None else _open_arc(base, u, v, ring, hole)
+    if arc:                    # cadena abierta: va de un borde del hueco al otro, con el primer y el último eslabón justo en ellos
+        first, span = arc
+        n_arc = max(2, round(span / (2 * math.pi) * count) + 1)
+        angles = [first + span * i / (n_arc - 1) for i in range(n_arc)]
     Vs, Fs, off = [], [], 0
     for i, th in enumerate(angles):
         radial = math.cos(th) * u + math.sin(th) * v
@@ -191,31 +205,16 @@ def _tube_open(points, ref, radius, sides=6):
     F += [(c1, (n - 1) * sides + k, (n - 1) * sides + (k + 1) % sides) for k in range(sides)]
     F = np.array(F, np.int64)
     centers = np.concatenate([np.repeat(points, sides, axis=0), points[:1], points[-1:]])
-    out = np.einsum("ij,ij->i", np.cross(V[F[:, 1]] - V[F[:, 0]], V[F[:, 2]] - V[F[:, 0]]), V[F].mean(axis=1) - centers[F[:, 0]])
-    F[out < 0] = F[out < 0][:, ::-1]
-    return V, F
+    return V, _outward(V, F, centers[F[:, 0]])
 
 
 def _rope(center, radius, axis, ring, strands, turns, wire, hole=None):
     """Cuerda: 'strands' hebras que se trenzan 'turns' veces (por vuelta completa) a lo largo del círculo de radio 'ring' perpendicular
     a 'axis'. Con 'hole' = (punto de la esfera, distancia) queda abierta: va de un borde del hueco al otro."""
-    axis = _unit(axis)
-    helper = np.array([0.0, 1.0, 0.0]) if abs(axis[1]) < 0.9 else np.array([1.0, 0.0, 0.0])
-    u = _unit(np.cross(axis, helper))
-    v = np.cross(axis, u)
-    base = axis * math.sqrt(radius ** 2 - ring ** 2)
-    start, span = 0.0, 2 * math.pi
-    if hole is not None:
-        grid = np.linspace(0, 2 * math.pi, 4096, endpoint=False)
-        pts = base + ring * (np.cos(grid)[:, None] * u + np.sin(grid)[:, None] * v)
-        free = np.linalg.norm(pts - hole[0], axis=1) >= hole[1]
-        if free.any() and not free.all():
-            first = int(np.argmax(free & ~np.roll(free, 1)))
-            free = np.roll(free, -first)
-            start, span = grid[first], np.nonzero(free)[0].max() * (grid[1] - grid[0])
-        else:
-            hole = None
-    closed = hole is None
+    axis, u, v, base = _ring_frame(axis, radius, ring)
+    arc = None if hole is None else _open_arc(base, u, v, ring, hole)
+    start, span = arc or (0.0, 2 * math.pi)
+    closed = arc is None
     n_pts = max(24, int(turns * 8 * span / (2 * math.pi)))
     th = start + np.linspace(0, span, n_pts, endpoint=not closed)
     p = base + ring * (np.cos(th)[:, None] * u + np.sin(th)[:, None] * v)
