@@ -53,7 +53,7 @@ JanusApp/
 │   │   ├── rig/         skeleton
 │   │   ├── storage/     export · project
 │   │   └── pipeline · model · render
-│   └── utils/         paths · logger · json · download · zip · callback · pool · update  (*_util.py)
+│   └── utils/         paths · logger · json · download · zip · callback · pool · mask · update  (*_util.py)
 ├── docs/
 ├── main.py · JanusApp.spec · requirements.txt · version.json
 └── testing/           (ignorada por git) objetos de prueba y entrenamiento de la IA
@@ -77,6 +77,8 @@ Generados al ejecutar (ignorados por git): `app/logs/` (incluye `ia/peticiones.j
 | Cambiar cómo se genera la forma | `shape/pipeline.py` |
 | Cambiar relieves (cadena, cuerda, pieza…) | `shape/geometry/relief.py` |
 | Cambiar los salientes | `shape/geometry/protrusion.py` |
+| Operaciones sobre máscaras (dilatar, erosionar, rellenar, etiquetar) | `utils/mask_util.py` |
+| Orientación de las vistas respecto a los ejes | `shape/geometry/field.py` (`view_targets`) |
 | Cambiar qué se guarda en disco | `shape/storage/project.py`, `shape/storage/export.py` |
 | Cambiar rutas o la URL de releases | `utils/paths_util.py` |
 | Cambiar la actualización | `utils/update_util.py`, `assets/scripts/update.ps1` |
@@ -130,4 +132,5 @@ La IA **no usa hilos**: responde en ~10 ms, de forma síncrona. Si se cierra la 
 | `zip_util` | `unzip_file` con progreso |
 | `callback_util` | `invoke_progress` (nunca propaga excepciones) |
 | `pool_util` | `parallel_map`, `parallel_dict` (hasta 8 hilos) |
+| `mask_util` | Máscaras booleanas de cualquier dimensión: `grow`, `dilate`, `erode`, `border`, `flood` (relleno desde semillas) y `label` (componentes conexas). Las comparten `imagen3d`, `malla3d`, `asistente`, `pipeline` y `protrusion` |
 | `update_util` | Lógica de actualización |

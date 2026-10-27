@@ -34,6 +34,9 @@ La IA y el dominio solo usan numpy + Pillow (sin torch, sin red). En desarrollo 
 | Datos de usuario | Bajo `app/` y en `USER_DATA_DIRS`; rutas **solo** en `paths_util.py` |
 | Errores | `get_logger("NOMBRE")`, `exc_info=True`; validación con `SpecError`/`ValueError` de mensaje legible |
 | Estilo | Textos y logs en español · docstrings breves con unidades y ejes · constantes en mayúsculas arriba · tipado ligero |
+| Código común | Lo repetido vive en un solo sitio: máscaras en `utils/mask_util.py`, orientación de vistas en `field.view_targets`, color del interior en `atlas.interior_color`, aristas en `mesh_ops._edge_keys` |
+| Paquetes | **Sin `__init__.py`**: el proyecto usa paquetes de espacios de nombres y `JanusApp.spec` recoge los módulos con `collect_submodules('app')` |
+| Compatibilidad | El workflow compila con **Python 3.11**: nada de sintaxis de 3.12 (por ejemplo, f-strings con las mismas comillas anidadas). Un módulo con error de sintaxis se pierde en el `.exe` y la app falla al importarlo |
 
 **Añadir una fase**: 1) `(clave, texto)` en `SECTIONS` y su página · 2) worker en `app/managers/` · 3) clave en `PHASES` (`storage/project.py`) · 4) documentarla y enlazarla desde el README.
 
