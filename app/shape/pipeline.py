@@ -7,6 +7,7 @@ import numpy as np
 from app.shape.geometry.cut import split_openable
 from app.shape.geometry.ellipsoid import bake_equirect, descriptor, is_ellipsoid, preview_model
 from app.shape.geometry.field import compose, detect_orientation, grid_shape, make_arrays
+from app.shape.geometry import mesh_object
 from app.shape.geometry.mesh_ops import build_attributes, crease_normals, is_watertight, remove_small_components, taubin_smooth
 from app.shape.geometry.opening import find_opening
 from app.shape.geometry.primitive import fit_primitive, is_round, primitive_mesh
@@ -91,6 +92,8 @@ def generate_shape(bp: Blueprint, progress=None) -> ShapeResult:
     """Genera el objeto a partir del Blueprint (el JSON ya interpretado): tamaño, forma, apertura y esqueleto salen de él."""
     t0 = time.time()
     warnings = list(bp.warnings)
+    if bp.mesh is not None:                     # el JSON trae el modelo 3d: se usa tal cual, sin sacarlo de las siluetas
+        return _mesh_object(bp, warnings, progress, t0)
     interior = Interior(bp.interiors)
     masks = {k: v.mask for k, v in bp.views.items()}
     images = {k: v.rgba for k, v in bp.views.items()}
@@ -224,6 +227,25 @@ def _skeleton(joint_marks, masks, dims, flips, dims_m, warnings):
     skeleton, notes = build_skeleton(joint_marks, dims_m, finder)
     warnings += [f"Esqueleto: {n}" for n in notes]
     return skeleton
+
+
+def _mesh_object(bp, warnings, progress, t0):
+    """Objeto que ya es una malla («malla» del JSON): una pieza con un color liso por zona y los LODs por simplificación."""
+    m = bp.mesh
+    V, F, zones = m["vertices"], m["faces"], m["zones"]
+    tex, zone_uv = mesh_object.zone_texture(m["colors"])
+    invoke_progress(progress, 0.2, "Optimizando LODs...")
+    lods = []
+    for li, (v, f, z) in enumerate(mesh_object.levels(V, F, zones, LOD_TOLERANCE)):
+        invoke_progress(progress, 0.3 + 0.55 * li / len(LOD_TOLERANCE), f"Construyendo LOD{li}...")
+        uvs = np.repeat(zone_uv[z][:, None, :], 3, axis=1)
+        verts, faces, nrm, uv = build_attributes(v, f, crease_normals(v, f, 40.0), uvs)
+        lods.append(Model([Part("body", verts.astype(np.float32), faces, nrm.astype(np.float32), uv.astype(np.float32))], tex))
+    info = {"mode": "malla", "primitive": None, "primitive_iou": 1.0, "openable": False, "watertight": bool(is_watertight(F)),
+            "texture": [tex.shape[0], tex.shape[1]], "seconds": round(time.time() - t0, 2), "triangles": [m_.triangles for m_ in lods],
+            "size": [round(x, 4) for x in lods[0].size], "metric": {"height_m": bp.dims_m[1], "width_m": bp.dims_m[0], "depth_m": bp.dims_m[2]}}
+    invoke_progress(progress, 0.92, "Modelo generado")
+    return ShapeResult(lods=lods, warnings=warnings, info=info, marks=bp.marks.to_dict())
 
 
 def _build_parts(V, F, opening, atlas, crease):

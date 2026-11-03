@@ -10,7 +10,7 @@ from app.shape.spec.schema import FORMAT, SpecError, parse_color
 
 r5 = lambda v: round(float(v), 5)
 NO_SCALE = {"eje", "luz", "angulo", "semilla", "inclinacion_grados", "eslabones", "id", "padre", "base", "intensidad", "formato", "nombre",
-            "hebras", "vueltas", "copias", "lat_grados", "lon_grados", "giro_grados", "paso_grados"}
+            "hebras", "vueltas", "copias", "caras", "zonas", "lat_grados", "lon_grados", "giro_grados", "paso_grados"}
 SCALE_KEYS = {"centro", "radio", "radios", "esquina", "tamano", "puntos", "linea", "punto", "grosor", "radio_esquina", "recorte",
               "frente", "detras", "izquierda", "derecha", "arriba", "abajo", "curvas", "vertices", "tamano_m"}
 VIEWS = ("frente", "detras", "izquierda", "derecha", "arriba", "abajo")

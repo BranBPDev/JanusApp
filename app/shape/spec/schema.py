@@ -72,6 +72,8 @@ import json
 import re
 from pathlib import Path
 
+import numpy as np
+
 from app.shape.geometry.relief import KINDS as RELIEF_KINDS, MAX_CURVES, MAX_MESH, MAX_POINTS, PIECE_FORMS, SIGNED
 from app.shape.rig.skeleton import PALETTE
 
@@ -124,6 +126,11 @@ def _texture(name, t):
     raise SpecError(f"{where}: falta «color», «degradado», «veta» o «mar».")
 
 
+def _flat_color(t):
+    """Color liso de una textura ya interpretada (la malla no lleva dibujo: el degradado, la veta o el mar se resumen en su color principal)."""
+    return t.get("color") or t.get("base") or t.get("desde") or t.get("claro")
+
+
 class ObjectSpec:
     def __init__(self, data: dict):
         self.data = data
@@ -160,6 +167,7 @@ class ObjectSpec:
             raise SpecError("Hacen falta al menos la vista «frente» y una lateral («izquierda» o «derecha»).")
         self.reliefs = data.get("relieves") or []
         self._check_reliefs()
+        self.mesh = self._check_mesh(data.get("malla"), self.textures)
         self.marks = data.get("marcas") or {}
         self.interior = data.get("interior") or {}
         for key, block in self.interior.items():
@@ -200,6 +208,29 @@ class ObjectSpec:
         else:
             parse_point(c.get("esquina"), w + ".esquina")
             parse_point(c.get("tamano"), w + ".tamano")
+
+    @staticmethod
+    def _check_mesh(m, textures):
+        """«malla» (opcional): el modelo 3d tal cual, en metros con Y arriba, la base en y = 0 y el frente hacia +Z.
+        {"vertices": [[x, y, z]…], "caras": [[i, j, k]…], "zonas": [zona de cada cara], "colores": [«#rrggbb» o nombre de una textura de color, de cada zona]}."""
+        if m is None:
+            return None
+        try:
+            V = np.array(m["vertices"], np.float64)
+            F = np.array(m["caras"], np.int64)
+            zones = np.array(m.get("zonas") or [0] * len(F), np.int64)
+            colors = [_flat_color(textures[c]) if c in textures else parse_color(c, "malla.colores") for c in (m.get("colores") or ["#c8c8d2"])]
+        except SpecError:
+            raise
+        except Exception:
+            raise SpecError("«malla» debe tener «vertices» ([x, y, z] en metros) y «caras» ([i, j, k]).")
+        if V.ndim != 2 or V.shape[1] != 3 or F.ndim != 2 or F.shape[1] != 3 or len(F) == 0:
+            raise SpecError("«malla»: «vertices» son ternas [x, y, z] y «caras» ternas de índices.")
+        if F.min() < 0 or F.max() >= len(V):
+            raise SpecError("«malla»: una cara usa un vértice que no existe.")
+        if zones.shape != (len(F),) or zones.min() < 0 or zones.max() >= len(colors):
+            raise SpecError("«malla»: «zonas» debe tener un número por cara y «colores» un color por zona.")
+        return {"vertices": V, "faces": F.astype(np.int32), "zones": zones, "colors": colors}
 
     def _check_reliefs(self):
         if not isinstance(self.reliefs, list):

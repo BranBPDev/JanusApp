@@ -38,7 +38,9 @@ def state(spec) -> list:
     if not spec:
         return ["vacio"]
     tex = spec.get("texturas", {})
-    out = ["esfera_banda" if "tapa" in tex else ("esfera_simple" if "cuerpo" in tex else "objeto_libre")]
+    out = ["esfera_banda" if "tapa" in tex and "frasco" not in tex else ("esfera_simple" if "cuerpo" in tex else "objeto_libre")]
+    if "frasco" in tex and "boquilla" in tex:
+        out.append("pocion")                               # objeto libre con zonas que se pueden pintar (frasco, tapa, boquilla)
     if any(c.get("textura") == "banda" for v in spec.get("vistas", {}).values() for c in v.get("capas", [])):
         out.append("tiene_banda")
     rel = spec.get("relieves", [])
@@ -71,6 +73,8 @@ def _num(tok, nums, where):
 def _slots(data, slot):
     tex = data.get("texturas", {})
     if slot in ("todo", "cuerpo"):
+        if "frasco" in tex:
+            return [t for t in ("frasco", "tapa", "boquilla") if t in tex]     # la poción: se pintan las tres zonas
         return ["cuerpo"] if "cuerpo" in tex else [t for t in ("tapa", "fondo") if t in tex]
     if slot in ("tapa", "fondo", "boton") and "cuerpo" in tex:
         raise SpecError("Este objeto es de un solo color; pídelo «con banda» para poder colorear arriba y abajo por separado.")
@@ -80,6 +84,22 @@ def _slots(data, slot):
     if name not in tex:
         raise SpecError(f"El objeto no tiene «{slot}».")
     return [name]
+
+
+LIGHTER = {"frasco": (("frasco_claro", 0.18), ("frasco_brillo", 0.42))}      # texturas que son la base aclarada hacia el blanco
+DARKER = {"tapa": (("tapa_sombra", 0.75),)}                                  # ...u oscurecida (la sombra del cabezal)
+
+
+def derived_shades(data, name, hx):
+    """Si se pinta una zona que tiene brillos o sombras propias (el frasco de la poción), se repintan con el mismo color aclarado u oscurecido."""
+    tex = data.get("texturas", {})
+    r, g, b = (int(hx[i:i + 2], 16) for i in (1, 3, 5))
+    for dep, k in LIGHTER.get(name, ()):
+        if dep in tex:
+            tex[dep] = {"color": "#%02x%02x%02x" % tuple(round(c + (255 - c) * k) for c in (r, g, b))}
+    for dep, k in DARKER.get(name, ()):
+        if dep in tex:
+            tex[dep] = {"color": "#%02x%02x%02x" % tuple(round(c * k) for c in (r, g, b))}
 
 
 def surface_color(data):
@@ -155,6 +175,11 @@ def run(spec, prog, hexes=(), nums=(), fuentes=None, pedidos=None):
                 i += 2
                 data, _ = ops.apply_ops(data, [{"op": "escalar", "factor": val / float(data["medidas_m"]["alto"])}])
                 log.append(f"alto → {val * 100:.0f} cm")
+        elif op == "alto":                               # «alto <n>» suelto (p. ej. tras pintar la poción): deja el objeto con esa altura
+            val = _num(toks[i] if i < len(toks) else "", nums, "alto")
+            i += 1
+            data, _ = ops.apply_ops(data, [{"op": "escalar", "factor": val / float(data["medidas_m"]["alto"])}])
+            log.append(f"alto → {val * 100:.0f} cm")
         elif op == "desde_imagenes":
             height = width = depth = None
             while i < len(toks) and toks[i] in ("alto", "ancho", "fondo"):
@@ -185,8 +210,10 @@ def run(spec, prog, hexes=(), nums=(), fuentes=None, pedidos=None):
                 raise SpecError("No hay objeto al que cambiar el tamaño.")
             if not 0.02 <= d <= 3:
                 raise SpecError("El diámetro debe estar entre 2 cm y 3 m.")
-            data, _ = ops.apply_ops(data, [{"op": "escalar", "factor": d / (2 * ops.radius(data))}])
-            log.append(f"diámetro {d * 100:g} cm")
+            free = not {"cuerpo", "fondo"} & set(data.get("texturas", {}))
+            size = float(data["medidas_m"]["alto"]) if free else 2 * ops.radius(data)    # un objeto libre mide «d» de alto; una esfera, de diámetro
+            data, _ = ops.apply_ops(data, [{"op": "escalar", "factor": d / size}])
+            log.append(f"{'alto' if free else 'diámetro'} {d * 100:g} cm")
         elif op == "escalar":
             k = take()
             if not k or not k.startswith("x"):
@@ -206,6 +233,7 @@ def run(spec, prog, hexes=(), nums=(), fuentes=None, pedidos=None):
             old_surface = surface_color(data)
             for tex in _slots(data, slot):
                 data, _ = ops.apply_ops(data, [{"op": "color", "textura": tex, "valor": hx}])
+                derived_shades(data, tex, hx)
             if slot in ("tapa", "todo", "cuerpo") and "triskel" in data.get("texturas", {}) and _carved(data) \
                     and data["texturas"]["triskel"].get("color") == old_surface:
                 data["texturas"]["triskel"]["color"] = hx      # el tallado sigue el color de la superficie mientras no se pida otro

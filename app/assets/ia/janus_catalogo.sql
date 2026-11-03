@@ -50,6 +50,7 @@ CREATE TABLE objetos (token TEXT PRIMARY KEY, descripcion TEXT NOT NULL, ficha T
 INSERT INTO "objetos" VALUES('vacio','Todavia no hay objeto','vacio',0);
 INSERT INTO "objetos" VALUES('esfera_simple','Esfera de un solo color','esfera_simple',1);
 INSERT INTO "objetos" VALUES('esfera_banda','Esfera de dos mitades con banda y boton','esfera_banda',2);
+INSERT INTO "objetos" VALUES('pocion','Pocion (spray): objeto libre con frasco, tapa (cabezal) y boquilla que se pueden pintar','pocion',4);
 INSERT INTO "objetos" VALUES('objeto_libre','Objeto hecho desde imagenes, un modelo 3d o una referencia: solo se puede reescalar','objeto_libre',3);
 CREATE TABLE ordenes (token TEXT PRIMARY KEY, argumentos TEXT NOT NULL DEFAULT '', descripcion TEXT NOT NULL, ejemplo TEXT NOT NULL DEFAULT '', orden INTEGER NOT NULL DEFAULT 0);
 INSERT INTO "ordenes" VALUES('nuevo','simple|banda','Esfera de un color o esfera de dos mitades con banda y boton (con interior por defecto)','nuevo banda',0);
@@ -77,7 +78,7 @@ INSERT INTO "texturas" VALUES('degradado','Degradado lineal o radial','{"degrada
 INSERT INTO "texturas" VALUES('veta','Veta de madera','{"veta": {"claro": "#eecd9c", "oscuro": "#cda472", "escala_m": 0.012, "semilla": 3}}',2);
 INSERT INTO "texturas" VALUES('mar','Celdas con lineas claras y sombra (caustica del mar)','{"mar": {"color": "#008040", "escala_m": 0.04, "semilla": 1}}',3);
 CREATE TABLE zonas (token TEXT PRIMARY KEY, textura TEXT NOT NULL, descripcion TEXT NOT NULL DEFAULT '', palabras TEXT NOT NULL DEFAULT '', orden INTEGER NOT NULL DEFAULT 0);
-INSERT INTO "zonas" VALUES('tapa','tapa','mitad de arriba de la esfera','la tapa|la tapa de la pokeball|la parte de arriba de la pokeball|la parte de arriba|la mitad de arriba|la mitad superior|la parte superior|el hemisferio de arriba|la cupula|la tapa de arriba|la parte alta',0);
+INSERT INTO "zonas" VALUES('tapa','tapa','mitad de arriba de la esfera','la tapa|la tapa de la pokeball|la parte de arriba de la pokeball|la parte de arriba|la mitad de arriba|la mitad superior|la parte superior|el hemisferio de arriba|la cupula|la tapa de arriba|la parte alta|el cabezal|el cabezal blanco|la parte blanca',0);
 INSERT INTO "zonas" VALUES('fondo','fondo','mitad de abajo','el fondo|la parte de abajo de la pokeball|la parte de abajo|la mitad de abajo|la base|la parte inferior|la mitad inferior|el hemisferio de abajo|la parte baja',1);
 INSERT INTO "zonas" VALUES('banda','banda','banda central (antes de ser cuerda o cadena)','la banda|la franja|el cinturon|la cinta|la banda central|la franja central|la linea central',2);
 INSERT INTO "zonas" VALUES('boton','cierre','boton central (textura cierre)','el boton|el cierre|el pulsador|el boton central|el circulo central',3);
@@ -86,5 +87,7 @@ INSERT INTO "zonas" VALUES('cadena','cadena','relieve de eslabones','la cadena|l
 INSERT INTO "zonas" VALUES('triskel','triskel','dibujo tallado en la tapa','el triskel|el triskelion|la triple espiral|el simbolo celta|la espiral',6);
 INSERT INTO "zonas" VALUES('pinchos','pinchos','conos repartidos','los pinchos|las puas|las espinas|los conos',7);
 INSERT INTO "zonas" VALUES('adorno','adorno','pieza que sobresale','el adorno|el saliente|el relieve|la pieza de arriba',8);
+INSERT INTO "zonas" VALUES('frasco','frasco','frasco de la pocion (con sus brillos)','el frasco|la botella|el bote|el recipiente|el liquido|el frasco de la pocion|la parte morada|el cuerpo del frasco',9);
+INSERT INTO "zonas" VALUES('boquilla','boquilla','boquilla del pulverizador','la boquilla|el pulverizador|el rociador|el difusor|la tobera|el boton del spray|la boquilla del spray',10);
 INSERT INTO "zonas" VALUES('cuerpo','cuerpo','esfera de un solo color','la esfera|la bola|todo|el objeto|la pelota|el cuerpo',20);
 COMMIT;
