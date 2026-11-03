@@ -105,7 +105,9 @@ class Scene:
         f = self.faces
         geo = np.cross(vr[f[:, 1]] - vr[f[:, 0]], vr[f[:, 2]] - vr[f[:, 0]])
         vis = np.nonzero(geo[:, 2] > 0)[0]
-        order = vis[np.argsort(vr[f[vis], 2].mean(axis=1) + self.depth_bias[vis])]  # de lejos a cerca
+        # de lejos a cerca, por el punto más lejano de cada cara: así los triángulos grandes (paredes) van antes que los detalles que
+        # sobresalen de ellos (relieves de una malla) y no los tapan al girar el objeto
+        order = vis[np.argsort(vr[f[vis], 2].min(axis=1) + self.depth_bias[vis])]
         shade = 0.4 + 0.6 * np.clip(nr[f[order]].mean(axis=1) @ _LIGHT, 0, 1)
         scale = min(width, height) * 0.42 / self.radius * zoom
         sx = width / 2 + vr[:, 0] * scale

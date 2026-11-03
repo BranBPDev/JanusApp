@@ -163,11 +163,11 @@ class ObjectSpec:
             if key not in VIEW_KEYS:
                 raise SpecError(f"Vista desconocida «{key}». Usa: {', '.join(VIEW_KEYS)}.")
             self._check_layers(view.get("capas"), f"vistas.{key}", silhouette=True)
-        if "frente" not in self.views or not ({"izquierda", "derecha"} & set(self.views)):
+        self.mesh = self._check_mesh(data.get("malla"), self.textures)
+        if self.mesh is None and ("frente" not in self.views or not ({"izquierda", "derecha"} & set(self.views))):
             raise SpecError("Hacen falta al menos la vista «frente» y una lateral («izquierda» o «derecha»).")
         self.reliefs = data.get("relieves") or []
         self._check_reliefs()
-        self.mesh = self._check_mesh(data.get("malla"), self.textures)
         self.marks = data.get("marcas") or {}
         self.interior = data.get("interior") or {}
         for key, block in self.interior.items():

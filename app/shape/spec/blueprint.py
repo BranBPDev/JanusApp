@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from app.shape.geometry.mesh_view import AXES as MESH_VIEWS, draw_mesh
 from app.shape.geometry.relief import build_reliefs
 from app.shape.spec.marks import Marks
 from app.shape.spec.raster import SS, Frame, downsample, draw_layers, draw_reliefs, edge, shape_mask
@@ -39,7 +40,10 @@ def _view(spec: ObjectSpec, name, reliefs=()):
     """(View recortada al cuadro, avisos) de una vista descrita en el JSON."""
     w, h = spec.size(name)
     frame = Frame.around(w, h, MARGIN, spec.ppm)
-    rgb, sil = draw_layers(spec.textures, spec.light, spec.views[name]["capas"], frame)
+    if spec.mesh is not None:                                # objeto con malla: la vista sale de la propia malla
+        rgb, sil = draw_mesh(spec.mesh, name, frame)
+    else:
+        rgb, sil = draw_layers(spec.textures, spec.light, spec.views[name]["capas"], frame)
     outline = parse_color(spec.outline.get("color", "#1c1c22"), "contorno") if spec.outline else None
     line = spec.outline.get("grosor_m", 0.0015) * frame.k / 2 if spec.outline else 0
     rel = draw_reliefs(reliefs, VIEW_KEYS[name], (spec.width, spec.height, spec.depth), frame)
@@ -117,7 +121,7 @@ def read_marks(spec: ObjectSpec) -> Marks:
 def build_blueprint(spec: ObjectSpec) -> Blueprint:
     """Calcula (en paralelo) las siluetas con su color, las huellas de salientes y las texturas interiores del JSON."""
     reliefs = build_reliefs(spec.reliefs, spec.textures, (spec.width, spec.height, spec.depth)) if spec.reliefs else []
-    tasks = {("view", v): (lambda v=v: _view(spec, v, reliefs)) for v in spec.views}
+    tasks = {("view", v): (lambda v=v: _view(spec, v, reliefs)) for v in (MESH_VIEWS if spec.mesh is not None else spec.views)}
     by_view = {}
     for item in spec.marks.get("salientes", []):
         by_view.setdefault(item["vista"], []).append(item)
