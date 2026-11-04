@@ -80,10 +80,8 @@ class Asistente:
         except Exception:
             return None
         text = " " + " ".join(words) + " "
-        for name, (aliases, *_rest) in refs.items():
-            if any(f" {n} " in text for n in [name] + aliases):
-                return name
-        return None
+        found = [(len(n), name) for name, (aliases, *_rest) in refs.items() for n in [name] + aliases if f" {n} " in text]
+        return max(found)[1] if found else None        # el nombre más largo: «super pocion» antes que «pocion»
 
     def pedir(self, text, spec, adjuntos=(), **_) -> Resultado:
         t0 = time.perf_counter()

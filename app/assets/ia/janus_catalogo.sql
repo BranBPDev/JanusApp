@@ -90,4 +90,5 @@ INSERT INTO "zonas" VALUES('adorno','adorno','pieza que sobresale','el adorno|el
 INSERT INTO "zonas" VALUES('frasco','frasco','frasco de la pocion (con sus brillos)','el frasco|la botella|el bote|el recipiente|el liquido|el frasco de la pocion|la parte morada|el cuerpo del frasco',9);
 INSERT INTO "zonas" VALUES('boquilla','boquilla','boquilla del pulverizador','la boquilla|el pulverizador|el rociador|el difusor|la tobera|el boton del spray|la boquilla del spray',10);
 INSERT INTO "zonas" VALUES('cuerpo','cuerpo','esfera de un solo color','la esfera|la bola|todo|el objeto|la pelota|el cuerpo',20);
+INSERT INTO "zonas" VALUES('emblema','emblema','simbolo de pokeball en relieve del cabezal de la pocion','el emblema|el logo|el logotipo|el dibujo del cabezal|la pokeball del cabezal|el simbolo del cabezal|el simbolo de la pocion|el simbolo de pokeball|el icono|el emblema del cabezal|el dibujo de la pokeball',11);
 COMMIT;

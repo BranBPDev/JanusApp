@@ -18,6 +18,7 @@ class Part:
     open_angle: float = 0.0            # grados al abrir del todo
     joints: Optional[np.ndarray] = None    # (n,4) uint8: huesos que mueven cada vértice (si el modelo tiene esqueleto)
     weights: Optional[np.ndarray] = None   # (n,4) float32: peso de cada hueso (suman 1)
+    raised: Optional[np.ndarray] = None    # (m,) bool: caras de relieve (el visor las dibuja después de la pared sobre la que sobresalen)
 
 
 @dataclass
@@ -54,5 +55,5 @@ class Model:
             n = p.normals.astype(np.float64) / s
             n /= np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-12)
             parts.append(Part(p.name, (p.vertices * s).astype(np.float32), p.faces, n.astype(np.float32), p.uvs,
-                              p.parent, tuple((np.array(p.origin) * s).tolist()), p.axis, p.open_angle, p.joints, p.weights))
+                              p.parent, tuple((np.array(p.origin) * s).tolist()), p.axis, p.open_angle, p.joints, p.weights, p.raised))
         return Model(parts, self.texture, None if self.skeleton is None else self.skeleton.scaled(float(sxz)))

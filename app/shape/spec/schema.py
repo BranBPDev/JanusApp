@@ -230,7 +230,8 @@ class ObjectSpec:
             raise SpecError("«malla»: una cara usa un vértice que no existe.")
         if zones.shape != (len(F),) or zones.min() < 0 or zones.max() >= len(colors):
             raise SpecError("«malla»: «zonas» debe tener un número por cara y «colores» un color por zona.")
-        return {"vertices": V, "faces": F.astype(np.int32), "zones": zones, "colors": colors}
+        raised = [int(z) for z in (m.get("relieve") or [])]
+        return {"vertices": V, "faces": F.astype(np.int32), "zones": zones, "colors": colors, "raised": raised}
 
     def _check_reliefs(self):
         if not isinstance(self.reliefs, list):

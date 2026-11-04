@@ -29,6 +29,10 @@ class Scene:
         flat_uv = np.zeros(len(self.faces), bool) if self.face_uv is None else \
             np.abs(self.face_uv - self.face_uv[:, :1]).max(axis=(1, 2)) < 1e-6
         self.depth_bias = np.where(flat_uv, -0.02 * self.radius, 0.0)
+        # relieves de una malla (símbolo de la poción): sobresalen de una pared con triángulos grandes; se acercan para que no los tape
+        if any(p.raised is not None for p in self.parts):
+            raised = np.concatenate([np.zeros(len(p.faces), bool) if p.raised is None else p.raised for p in self.parts])
+            self.depth_bias = self.depth_bias + np.where(raised, 0.03 * self.radius, 0.0)
 
     def _offsets(self):
         off, out = 0, []
@@ -105,9 +109,7 @@ class Scene:
         f = self.faces
         geo = np.cross(vr[f[:, 1]] - vr[f[:, 0]], vr[f[:, 2]] - vr[f[:, 0]])
         vis = np.nonzero(geo[:, 2] > 0)[0]
-        # de lejos a cerca, por el punto más lejano de cada cara: así los triángulos grandes (paredes) van antes que los detalles que
-        # sobresalen de ellos (relieves de una malla) y no los tapan al girar el objeto
-        order = vis[np.argsort(vr[f[vis], 2].min(axis=1) + self.depth_bias[vis])]
+        order = vis[np.argsort(vr[f[vis], 2].mean(axis=1) + self.depth_bias[vis])]
         shade = 0.4 + 0.6 * np.clip(nr[f[order]].mean(axis=1) @ _LIGHT, 0, 1)
         scale = min(width, height) * 0.42 / self.radius * zoom
         sx = width / 2 + vr[:, 0] * scale

@@ -74,7 +74,7 @@ def _slots(data, slot):
     tex = data.get("texturas", {})
     if slot in ("todo", "cuerpo"):
         if "frasco" in tex:
-            return [t for t in ("frasco", "tapa", "boquilla") if t in tex]     # la poción: se pintan las tres zonas
+            return [t for t in ("frasco", "tapa", "boquilla", "emblema") if t in tex]     # la poción: se pintan todas sus zonas
         return ["cuerpo"] if "cuerpo" in tex else [t for t in ("tapa", "fondo") if t in tex]
     if slot in ("tapa", "fondo", "boton") and "cuerpo" in tex:
         raise SpecError("Este objeto es de un solo color; pídelo «con banda» para poder colorear arriba y abajo por separado.")
@@ -86,16 +86,16 @@ def _slots(data, slot):
     return [name]
 
 
-LIGHTER = {"frasco": (("frasco_claro", 0.18), ("frasco_brillo", 0.42))}      # texturas que son la base aclarada hacia el blanco
+LIGHTER = {"frasco": (("frasco_claro", 0.18), ("frasco_brillo", 0.42), ("boquilla", 0.12), ("emblema", 0.0))}   # texturas que son la base aclarada hacia el blanco (la boquilla y el emblema siguen al frasco)
 DARKER = {"tapa": (("tapa_sombra", 0.75),)}                                  # ...u oscurecida (la sombra del cabezal)
 
 
-def derived_shades(data, name, hx):
+def derived_shades(data, name, hx, skip=()):
     """Si se pinta una zona que tiene brillos o sombras propias (el frasco de la poción), se repintan con el mismo color aclarado u oscurecido."""
     tex = data.get("texturas", {})
     r, g, b = (int(hx[i:i + 2], 16) for i in (1, 3, 5))
     for dep, k in LIGHTER.get(name, ()):
-        if dep in tex:
+        if dep in tex and dep not in skip:
             tex[dep] = {"color": "#%02x%02x%02x" % tuple(round(c + (255 - c) * k) for c in (r, g, b))}
     for dep, k in DARKER.get(name, ()):
         if dep in tex:
@@ -120,6 +120,7 @@ def run(spec, prog, hexes=(), nums=(), fuentes=None, pedidos=None):
     data = copy.deepcopy(spec) if spec else {}
     log, i = [], 0
     toks = [t for t in prog if t != "fin"]
+    explicit = {SLOT_TEXTURE.get(toks[k + 1], toks[k + 1]) for k in range(len(toks) - 1) if toks[k] == "color"}   # zonas que el programa pinta a propósito: lo derivado no las pisa
     free = set()                                        # posiciones de fichas que añade una macro (starter): sus colores no se comprueban
     for k in range(len(toks) - 1):                      # «plano adorno triskel» -> «adorno triskel plano»
         if toks[k] in ("plano", "relieve") and toks[k + 1] == "adorno":
@@ -233,7 +234,7 @@ def run(spec, prog, hexes=(), nums=(), fuentes=None, pedidos=None):
             old_surface = surface_color(data)
             for tex in _slots(data, slot):
                 data, _ = ops.apply_ops(data, [{"op": "color", "textura": tex, "valor": hx}])
-                derived_shades(data, tex, hx)
+                derived_shades(data, tex, hx, explicit)
             if slot in ("tapa", "todo", "cuerpo") and "triskel" in data.get("texturas", {}) and _carved(data) \
                     and data["texturas"]["triskel"].get("color") == old_surface:
                 data["texturas"]["triskel"]["color"] = hx      # el tallado sigue el color de la superficie mientras no se pida otro
