@@ -93,6 +93,8 @@
 | **Capa** | Forma (círculo, elipse, rect, polígono, línea) con una textura; se pintan en orden |
 | **Textura** | Material con nombre: color, degradado o veta |
 | **Tallado** | Efecto de grabado o relieve en la textura que solo modula el brillo |
+| **Objeto malla** | Objeto cuyo JSON lleva `malla`: el modelo 3D tal cual, con una zona de color por cara |
+| **Referencia** | Objeto registrado en el catálogo de la IA con un nombre y alias («superball», «max revivir»…) |
 | **Relieve** | Pieza que sobresale de un cuerpo esférico y sigue su curvatura (franja, cadena, cuerda, pieza, trazo, malla) |
 | **Marca** | Dato de apertura o esqueleto: corte, mueve, bisagra, botón, saliente, huesos |
 | **Saliente** | Parte que sobresale de un cuerpo redondo (tapa, cierre…) |
@@ -119,14 +121,14 @@
 | Texturas · Colisión · Esqueleto · Visor 3D | ⏳ «Próximamente» (la textura básica, el esqueleto y el visor ya viven en Forma) |
 
 - **Plataforma**: solo Windows.
-- **IA**: construye con sus piezas o con imágenes; no inventa formas ni lee archivos 3D. Sus aciertos dependen de lo entrenada que esté ([IA integrada](ia.md)).
+- **IA**: construye con sus piezas, con imágenes o `.stl` o con los objetos registrados en el catálogo; no inventa formas ni lee `.glb`/`.obj`. Sus aciertos dependen de lo entrenada que esté ([IA integrada](ia.md)).
 - **Imágenes**: hace falta frente + lateral con el nombre de la vista, o una hoja con varias vistas; con una sola se estima la otra; las fotos en perspectiva no valen; los fondos deben ser lisos o transparentes; los agujeros pasantes del objeto se rellenan. El SVG se dibuja de forma sencilla (sin transformaciones).
 - **Tallado**: solo sobre lo dibujado en la textura, no sobre relieves que sobresalen.
 - **Apertura**: eje X fijo y 75°; el corte debe ser un único contorno cerrado; dos piezas huecas con cúpula interior simple; el corte desde el frente solo admite líneas horizontales.
 - **Salientes y relieves**: solo sobre cuerpos esféricos o elípticos; los salientes toman la altura de las siluetas (sin concavidades).
 - **Volumen**: casco visual, sin concavidades que las siluetas no muestren; con pocas vistas sale poco detallado.
 - **Textura**: atlas de hasta 1024 px por lado en volúmenes (512 en salientes).
-- **Rendimiento**: `qem.py` es Python puro (lo más lento con mallas grandes).
-- **Visor**: por software, con orden de profundidad por triángulo (puede mostrar artefactos).
+- **Rendimiento**: `qem.py` es Python puro (lo más lento con mallas grandes). La textura de mar (`_cells`), el relleno del atlas (`extend_colors`) y el dibujo de relieves están vectorizados; una pokeball se genera en ~2 s y la starterball en ~4–5 s (dos núcleos).
+- **Visor**: por software, con orden de profundidad por triángulo (puede mostrar artefactos); las zonas de `relieve` de una malla llevan un sesgo para evitarlos. Un visor 3D con z-buffer (el motor del juego) no los tiene.
 - **Paramétricos**: el motor que los use aporta su esfera/elipsoide y UV equirrectangular, o usa el `.glb`.
 - **Actualización**: solo en el `.exe`.

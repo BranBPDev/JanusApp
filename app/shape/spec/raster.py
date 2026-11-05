@@ -83,17 +83,21 @@ def _noise(xs, ys, seed):
 
 
 def _cells(u, v, seed):
-    """(distancia al punto más cercano, a la segunda) de un campo de puntos aleatorios (uno por celda unidad) en (u, v)."""
+    """(distancia al punto más cercano, a la segunda) de un campo de puntos aleatorios (uno por celda unidad) en (u, v).
+    El punto de cada celda se calcula una sola vez sobre la red de celdas que cubre la imagen (no por píxel y vecina)."""
     iu, iv = np.floor(u).astype(np.int64), np.floor(v).astype(np.int64)
+    u0, v0 = int(iu.min()) - 1, int(iv.min()) - 1
+    cx = np.arange(u0, int(iu.max()) + 2, dtype=np.int64)[None, :]
+    cy = np.arange(v0, int(iv.max()) + 2, dtype=np.int64)[:, None]
+    h = (cx * 73856093) ^ (cy * 19349663) ^ (seed * 83492791)
+    px = cx + 0.15 + 0.7 * (((h * 2654435761) % 1000003) / 1000003.0)          # posición del punto de cada celda
+    py = cy + 0.15 + 0.7 * (((h * 40503 + 12345) % 999983) / 999983.0)
     d1 = np.full(u.shape, 9.0, np.float32)
     d2 = d1.copy()
     for dy in (-1, 0, 1):
         for dx in (-1, 0, 1):
-            cx, cy = iu + dx, iv + dy
-            h = (cx * 73856093) ^ (cy * 19349663) ^ (seed * 83492791)
-            jx = ((h * 2654435761) % 1000003) / 1000003.0
-            jy = ((h * 40503 + 12345) % 999983) / 999983.0
-            d = np.hypot(cx + 0.15 + 0.7 * jx - u, cy + 0.15 + 0.7 * jy - v).astype(np.float32)
+            r, c = iv + (dy - v0), iu + (dx - u0)
+            d = np.hypot(px[r, c] - u, py[r, c] - v).astype(np.float32)
             d2 = np.minimum(d2, np.maximum(d, d1))
             d1 = np.minimum(d1, d)
     return d1, d2
@@ -264,14 +268,18 @@ def draw_reliefs(meshes, key, dims, frame: Frame):
         return None
     img, msk = Image.new("RGB", (frame.w, frame.h), (0, 0, 0)), Image.new("L", (frame.w, frame.h), 0)
     di, dm = ImageDraw.Draw(img), ImageDraw.Draw(msk)
+    axis = {"front": 2, "back": 2, "right": 0, "left": 0, "top": 1, "bottom": 1}[key]
     for m in meshes:
         xy, depth = view_points(key, m.V, dims)
         faces = m.F[visible_faces(m, key)]
-        for f in faces[np.argsort(depth[faces].mean(axis=1))]:
-            pts = [frame.px(xy[i]) for i in f]
-            n = np.cross(m.V[f[1]] - m.V[f[0]], m.V[f[2]] - m.V[f[0]])
-            shade = 0.72 + 0.28 * min(1.0, abs(n[{"front": 2, "back": 2, "right": 0, "left": 0, "top": 1, "bottom": 1}[key]]) / (np.linalg.norm(n) + 1e-12))
-            di.polygon(pts, fill=tuple(int(c * shade) for c in m.color))
+        faces = faces[np.argsort(depth[faces].mean(axis=1))]
+        px, py = frame.px(xy.T)                                                    # todos los puntos de una vez
+        n = np.cross(m.V[faces[:, 1]] - m.V[faces[:, 0]], m.V[faces[:, 2]] - m.V[faces[:, 0]])
+        shade = 0.72 + 0.28 * np.minimum(1.0, np.abs(n[:, axis]) / (np.linalg.norm(n, axis=1) + 1e-12))
+        color = np.array(m.color, np.float64)
+        for f, sh in zip(faces, shade):
+            pts = [(px[i], py[i]) for i in f]
+            di.polygon(pts, fill=tuple(int(c * sh) for c in color))
             dm.polygon(pts, fill=255)
     mask = np.asarray(msk) > 127
     return (mask, np.asarray(img).astype(np.float32)) if mask.any() else None

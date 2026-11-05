@@ -48,7 +48,30 @@ La IA y el dominio solo usan numpy + Pillow (sin torch, sin red). En desarrollo 
 | `python testing/ia/probar_rapido.py [modelo.npz]` | Acierto de la IA en ejemplos nuevos, peticiones escritas a mano (compara los **objetos** resultantes) y tiempos |
 | `python testing/ia/desde_logs.py peticiones.jsonl` | Resumen de un registro de la IA (fallos y correcciones) |
 
-`testing/objetos/` guarda objetos de ejemplo (esferas, starterball con cuerda, triskel tallado…).
+`testing/objetos/` guarda objetos de ejemplo (esferas, starterball con cuerda, triskel tallado…) y los JSON de los objetos registrados (poción, superpoción, ultrapoción, balls, revivir…).
+
+## 📚 Catálogo de la IA
+
+La base `app/assets/ia/janus_catalogo.db` guarda lo que la IA debe saber de la aplicación. Se gestiona con `testing/ia/catalogo_cli.py`:
+
+```powershell
+python testing/ia/catalogo_cli.py listar [tabla]            # muestra una tabla (o todas)
+python testing/ia/catalogo_cli.py sql "INSERT INTO zonas VALUES(…)"
+python testing/ia/catalogo_cli.py volcar                    # escribe janus_catalogo.sql (sin las referencias)
+python testing/ia/catalogo_cli.py json NOMBRE objeto.json --alias "a,b" --descripcion "texto"   # registra un objeto janus.objeto/1
+python testing/ia/catalogo_cli.py referencia NOMBRE --alto 0.3 imagenes_o_modelo.stl            # lo registra desde imágenes o un .stl
+python testing/ia/catalogo_cli.py olvidar NOMBRE
+```
+
+Los objetos de malla se **generan con scripts** (cada uno escribe sus JSON en `testing/objetos/`; después se registran con `catalogo_cli.py json`):
+
+| Script | Genera |
+|---|---|
+| `testing/ia/crear_pocion.py` | `pocion` desde el STL y el sprite (zonas de color, símbolo en relieve, boquilla recortada), `superpocion` y `ultrapocion` |
+| `testing/ia/crear_balls.py` | `superball`, `ultraball`, `honorball`, `shinyball` a partir de la esfera con banda y botón |
+| `testing/ia/crear_revivir.py` | `revivir` y `maxrevivir` |
+
+**Añadir un objeto registrado**: 1) crear su JSON · 2) registrarlo con `catalogo_cli.py json` · 3) añadir su nombre a `datos.py` (`BALL_NAMES`, `POCION_VARIANT_NAMES`…, para la intención `i_ref`) · 4) reentrenar y comprobar «genera el/la …». Si sus zonas son nuevas, añadirlas a la tabla `zonas` con sus palabras. Los JSON de `testing/` no se versionan: la base de datos (`janus_catalogo.db`) es la que viaja con la aplicación.
 
 ## 🧠 Entrenar la IA
 
@@ -61,7 +84,7 @@ python testing/ia/entrenar.py 2000 salida.npz app/assets/ia/janus_ia.npz 1.5e-3 
 
 - Los ejemplos salen de `testing/ia/datos.py`: un generador de peticiones en español (con erratas, sinónimos y frases largas) + estado del objeto → programa. Cada **intención** es una función (`i_color`, `i_adorno`, `i_tallar`, `i_starter`, `i_desde_imagenes`, `i_recolor_desc`…).
 - Si cambia el vocabulario, el entrenamiento arranca desde los pesos previos remapeando las fichas (*warm start*).
-- Guarda un punto cada 500 pasos. A ~1,4 s por paso, 2000 pasos son ~45 min en dos núcleos. El proceso debe seguir vivo hasta acabar.
+- Guarda un punto cada 500 pasos. A ~1,4–1,8 s por paso, 1800–2000 pasos son ~45–55 min en dos núcleos. El proceso debe seguir vivo hasta acabar (hazlo de una vez, sin interrumpirlo).
 - Después, `probar_rapido.py` y copiar el `.npz` a `app/assets/ia/janus_ia.npz`.
 
 **Reentrenar con casos reales**: 1) pide el `peticiones.jsonl` de `app/logs/ia/` · 2) mira las líneas `peticion` con `ok: false` y las `valoracion` con `correccion` · 3) añade al generador la frase y el programa correcto (o una intención nueva) · 4) reentrena y comprueba que los casos pasan.

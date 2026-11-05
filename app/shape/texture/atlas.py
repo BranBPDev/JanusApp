@@ -13,19 +13,23 @@ def extend_colors(rgba: np.ndarray, mask: np.ndarray, iters: int = 10) -> np.nda
     """Rellena el fondo con el color del borde del objeto (evita halos oscuros al filtrar la textura)."""
     color = rgba[..., :3].astype(np.float32)
     valid = mask.copy()
+    h, w = valid.shape
+    shifts = ((1, 0), (-1, 0), (0, 1), (0, -1))
     for _ in range(iters):
         if valid.all():
             break
-        acc = np.zeros_like(color)
         cnt = np.zeros(valid.shape, np.float32)
-        for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-            sv = np.roll(valid, (dy, dx), axis=(0, 1))
-            sc = np.roll(color, (dy, dx), axis=(0, 1))
-            acc += sc * sv[..., None]
-            cnt += sv
-        fill = (~valid) & (cnt > 0)
-        color[fill] = acc[fill] / cnt[fill][:, None]
-        valid = valid | fill
+        for dy, dx in shifts:
+            cnt += np.roll(valid, (dy, dx), axis=(0, 1))
+        ys, xs = np.nonzero((~valid) & (cnt > 0))              # solo los píxeles vacíos que tocan alguno lleno (el borde que avanza)
+        if not len(ys):
+            break
+        acc = np.zeros((len(ys), 3), np.float32)
+        for dy, dx in shifts:                                  # mismo orden de suma que antes: el resultado no cambia
+            sy, sx = (ys - dy) % h, (xs - dx) % w
+            acc += color[sy, sx] * valid[sy, sx][:, None]
+        color[ys, xs] = acc / cnt[ys, xs][:, None]
+        valid[ys, xs] = True
     return np.clip(color, 0, 255).astype(np.uint8)
 
 

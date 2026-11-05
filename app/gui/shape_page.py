@@ -1,12 +1,10 @@
 import json
-from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import (
-    QButtonGroup, QCheckBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QProgressBar, QPushButton, QSlider,
-    QVBoxLayout, QWidget,
+    QButtonGroup, QCheckBox, QHBoxLayout, QLabel, QPushButton, QSlider, QVBoxLayout, QWidget,
 )
 
 from app.gui.ai_chat import ChatPanel

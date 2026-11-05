@@ -20,6 +20,9 @@ flowchart LR
     H & I & J & K --> L[Textura] --> M[Corte en 2 piezas] --> N[GLB · OBJ · manifest]
 ```
 
+> [!NOTE]
+> Un objeto con **`malla`** no pasa por las etapas 2–9: `pipeline._mesh_object` usa la malla tal cual (una pieza, un color por zona) y solo genera los LODs; la vista previa se dibuja desde la malla (`geometry/mesh_view`).
+
 ## 🪜 Etapas
 
 | # | Etapa | Módulo |
@@ -34,6 +37,7 @@ flowchart LR
 | 8 | Cortar en pieza fija y móvil | `geometry/cut` |
 | 9 | Esqueleto y pesos (si hay huesos) | `rig/skeleton` |
 | 10 | Guardar | `storage/project` · `storage/export` |
+| — | Objeto `malla`: usar la malla y simplificar | `pipeline._mesh_object` · `geometry/mesh_object` · `geometry/mesh_view` |
 
 ## 🖌️ 1–3 · Del JSON a las siluetas (`spec`)
 
@@ -99,7 +103,7 @@ Las `marcas.huesos` (hasta 60, cada una con su punto en una o más vistas) se ll
 
 ## 📉 LODs (`qem`)
 
-Colapso de aristas con error cuádrico (Garland-Heckbert), sin dar la vuelta a triángulos ni crear geometría no-manifold. Volumen: error 0,0012 / 0,003 / 0,01 / 0,04 × tamaño, cada nivel desde el anterior. Primitivas: una malla nueva por LOD. Esfera/elipsoide: un solo nivel.
+Colapso de aristas con error cuádrico (Garland-Heckbert), sin dar la vuelta a triángulos ni crear geometría no-manifold. En un objeto malla, `mesh_object.levels` decima cada nivel desde el anterior y `transfer_zones` da a cada cara la zona de la cara original más cercana. Volumen: error 0,0012 / 0,003 / 0,01 / 0,04 × tamaño, cada nivel desde el anterior. Primitivas: una malla nueva por LOD. Esfera/elipsoide: un solo nivel.
 
 ## 💾 10 · Exportación (`export`, `project`)
 
@@ -109,4 +113,4 @@ Colapso de aristas con error cuádrico (Garland-Heckbert), sin dar la vuelta a t
 
 ## 👁️ Visor (`render.py`, `viewer.py`)
 
-Sin OpenGL: `Scene` (numpy) calcula la pose abierta/cerrada (Rodrigues), ordena de lejos a cerca, sombrea `0,4 + 0,6·max(0, n·luz)` y calcula la transformación afín de textura por triángulo; `MeshViewer` lo pinta con `QPainter`. Caras interiores con sesgo de profundidad `−0,02·radio`.
+Sin OpenGL: `Scene` (numpy) calcula la pose abierta/cerrada (Rodrigues), ordena de lejos a cerca por el **centro** de cada triángulo, sombrea `0,4 + 0,6·max(0, n·luz)` y calcula la transformación afín de textura por triángulo; `MeshViewer` lo pinta con `QPainter`. Caras interiores con sesgo de profundidad `−0,02·radio` y las caras de relieve de una malla (`Part.raised`) con `+0,03·radio`, para que un símbolo pequeño no quede tapado por la pared grande de debajo.

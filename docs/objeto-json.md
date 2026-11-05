@@ -24,9 +24,10 @@ Un único archivo describe el objeto entero. Lo escribe la IA del chat, se puede
 | `formato` | Sí | Siempre `"janus.objeto/1"` |
 | `medidas_m` | Sí | `ancho` (X), `alto` (Y), `fondo` (Z) del objeto completo |
 | `texturas` | Sí | Materiales con nombre |
-| `vistas` | Sí | Cómo se ve cada vista: **`frente` y una lateral** como mínimo |
+| `vistas` | Sí (salvo con `malla`) | Cómo se ve cada vista: **`frente` y una lateral** como mínimo. Con `malla` puede ser `{}`: las vistas se dibujan desde la malla |
 | `redondeo` | No | `0` (por defecto) = casco visual de las vistas; `2`–`4` redondea las secciones del volumen (lo usan los objetos hechos desde imágenes) |
 | `sombreado` · `contorno` | No | Luz respecto a la cámara · línea alrededor de la silueta de cada vista |
+| `malla` | No | El modelo 3D tal cual (vértices, caras y zona de color por cara): sustituye a las vistas ([más abajo](#-objeto-malla)) |
 | `relieves` | No | Piezas que sobresalen de un cuerpo esférico |
 | `marcas` | No | Corte, bisagra, botón, salientes y huesos |
 | `interior` | No | Texturas de dentro de la tapa y de la base |
@@ -96,6 +97,26 @@ Piezas que siguen la curvatura de una esfera centrada en la caja y apoyada en el
 | `boton` | `vista`, `centro`, `radio` | Queda entero en la tapa y deja su hueco en la base |
 | `salientes` | `vista`, una forma (`circulo`, `elipse`…) | Huella de lo que sobresale del cuerpo |
 | `huesos` | `id` (0–59), `padre` (`null` = raíz), y un punto `[x, y]` por vista (`frente`, `derecha`…) | Esqueleto |
+
+## 🧊 Objeto malla
+
+Cuando el objeto ya es un modelo 3D (una poción, un cristal…), `malla` lo describe directamente en metros, con **Y arriba, la base en y = 0 y el frente hacia +Z**:
+
+```json
+"malla": {
+  "vertices": [[x, y, z], …],
+  "caras":    [[i, j, k], …],
+  "zonas":    [0, 0, 1, …],                 // zona de cada cara
+  "colores":  ["tapa", "frasco", "#ff8800"],// de cada zona: nombre de una textura o #rrggbb
+  "relieve":  [3]                           // (opcional) zonas que sobresalen de una pared de triángulos grandes
+}
+```
+
+- El modelo se usa **tal cual**: cada zona es un color liso (una textura de bloques de 8 px) y los LODs salen por simplificación (`qem`), con la zona de cada cara transferida de la malla original y normales con arista a 40°. No se abre ni lleva esqueleto.
+- Si `colores` usa **nombres de textura**, pintar esa textura (por el chat o editando `texturas`) recolorea la zona. Varias zonas pueden compartir una textura.
+- `relieve` marca zonas pequeñas en relieve (el símbolo de la poción): el visor las dibuja un poco más cerca para que el orden de profundidad por triángulo no las tape. En un visor 3D con z-buffer no hace falta.
+- `medidas_m` debe coincidir con la caja de la malla. Las seis vistas de la vista previa se dibujan desde la propia malla.
+- Los objetos registrados de la IA (poción, cristales…) se generan con los scripts de `testing/ia/crear_*.py` ([Desarrollo](desarrollo.md#-catálogo-de-la-ia)).
 
 ## 🔓 Interior
 

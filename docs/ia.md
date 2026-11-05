@@ -21,12 +21,12 @@ flowchart LR
 | | |
 |---|---|
 | Arquitectura | Transformer solo decodificador: dim 128 · 4 cabezas · 3 capas · ff 512 · contexto 176 · pesos atados · posiciones aprendidas |
-| Vocabulario | ≈ 520 fichas (palabras, colores, órdenes) |
+| Vocabulario | ≈ 600 fichas (palabras, colores, órdenes, nombres de zonas) |
 | Pesos | float16 en un `.npz` (~1,2 MB) |
 | Inferencia | Caché de claves/valores, decodificación voraz restringida a fichas del programa; `confianza` = la menor probabilidad de una ficha (< 0,55 → aviso) |
 | Erratas | Una palabra desconocida se sustituye por la conocida más parecida (`roka` → `roja`) |
 
-Entrada del modelo: **fichas de contexto** (cómo es el objeto actual: `vacio`, `esfera_simple`, `esfera_banda`, `tiene_banda`, `tiene_cuerda`, `tiene_cadena`, `tiene_triskel`, `tiene_pinchos`, `tiene_adorno`, `triskel_plano`, `tiene_tallado`, `objeto_libre`; y si hay adjuntos: `img`, `img_frente`, `img_lateral`, `img_hoja`) + las palabras de la petición. Los colores `#rrggbb` y las medidas («15 cm», «0,3 m», «20mm») no pasan por el modelo: se sustituyen por `<h0>…` y `<n0>…` y el programa los copia.
+Entrada del modelo: **fichas de contexto** (cómo es el objeto actual: `vacio`, `esfera_simple`, `esfera_banda`, `tiene_banda`, `tiene_cuerda`, `tiene_cadena`, `tiene_triskel`, `tiene_pinchos`, `tiene_adorno`, `triskel_plano`, `tiene_tallado`, `objeto_libre`, `pocion` (objeto libre con zonas pintables), `ref` (el texto nombra un objeto registrado en el catálogo); y si hay adjuntos: `img`, `img_frente`, `img_lateral`, `img_hoja`) + las palabras de la petición. Los colores `#rrggbb` y las medidas («15 cm», «0,3 m», «20mm») no pasan por el modelo: se sustituyen por `<h0>…` y `<n0>…` y el programa los copia.
 
 ## 🧾 El programa
 
@@ -35,14 +35,16 @@ Entrada del modelo: **fichas de contexto** (cómo es el objeto actual: `vacio`, 
 | `nuevo simple` · `nuevo banda` | Esfera de un color · esfera de dos mitades con banda y botón (con su **interior por defecto**) |
 | `starter` | La **starterball**: `nuevo banda` + banda → cuerda azul marino (`#000080`) + tapa oliva (`#808000`) + fondo verde (`#008040`) con textura de mar + botón blanco + triskel tallado en la tapa. Lo que se nombre después lo cambia |
 | `diam <n>` · `escalar xK` | Diámetro en metros · factor de tamaño |
-| `color ZONA COL` | Zonas: `tapa fondo banda boton todo cuerda cadena triskel pinchos adorno` |
+| `color ZONA COL` | Zonas: `tapa fondo banda boton todo cuerda cadena triskel pinchos adorno`; en la poción `frasco tapa boquilla emblema`; en el revivir `cristal` |
 | `banda cuerda\|cadena [COL]` | Sustituye la banda por una cuerda/cadena del mismo grosor, con un aro que rodea el botón. Si ya la tiene, solo cambia el color |
 | `a_cuerda` · `a_cadena [COL]` | Convierte las cadenas en cuerdas (o al revés) |
 | `adorno FORMA [COL] [plano] [tallado\|tallado_relieve] [piedra\|madera] [tam <n>] [cant K]` | Formas: `triskel pinchos anillo bola cono cilindro` |
 | `mar ZONA [COL]` | Textura de mar (celdas con líneas claras y sombra, como las cáusticas) en `fondo`, `tapa` o `cuerpo`; sin color conserva el actual |
 | `tallar triskel [tallado\|tallado_relieve] [piedra\|madera] [COL]` | Talla el triskel dibujado en la tapa (si no hay, lo crea) |
 | `quitar adornos\|cuerdas\|cadenas` | Quita relieves |
-| `desde_imagenes [alto <n>]` | Construye el objeto a partir de las imágenes adjuntas |
+| `desde_imagenes [alto <n>]` | Construye el objeto a partir de las imágenes (o el modelo `.stl`) adjuntos |
+| `desde_referencia [alto <n>]` | Construye un **objeto registrado en el catálogo** que se nombra en la petición ([más abajo](#-catálogo-y-objetos-registrados)) |
+| `alto <n>` | Deja el objeto actual con esa altura (metros) |
 | `pedir_imagenes` | «Eso no lo hago con mis piezas»: pide imágenes o un JSON |
 | `fin` | Fin del programa |
 
@@ -53,6 +55,23 @@ Colores: 15 base (`rojo azul verde amarillo naranja morado rosa negro blanco gri
 - Un color que la IA escribe y **no nombraste** se ignora (y se avisa en los cambios).
 - Pedir «la cuerda roja» no toca el resto del objeto.
 - Sobre un objeto que ya existe no se crea otro nuevo salvo que lo pidas («hazme…», «otra…»).
+
+## 📚 Catálogo y objetos registrados
+
+Lo que existe en la aplicación (colores, zonas, formas, órdenes, plantillas y **objetos registrados**) vive en una base SQLite de solo lectura, `app/assets/ia/janus_catalogo.db` (su volcado en texto es `janus_catalogo.sql`). La IA, el ejecutor del programa y el generador de entrenamiento leen de ahí; para registrar una novedad se añade una fila con `testing/ia/catalogo_cli.py` y se reentrena ([Desarrollo](desarrollo.md#-catálogo-de-la-ia)).
+
+Un **objeto registrado** (tabla `referencias`) es un JSON `janus.objeto/1` completo con un nombre y alias. Si la petición contiene uno de esos nombres («genera la superball», «hazme el max revivir»), el contexto lleva la ficha `ref` y el programa es `desde_referencia fin`. Si el texto encaja con varios nombres gana el **más largo** («super pocion» antes que «pocion»). Después se puede recolorear y cambiar de tamaño como cualquier objeto.
+
+| Nombre (alias) | Qué es |
+|---|---|
+| `pocion` (`potion`, `spray`…) | Spray: frasco, cabezal blanco (`tapa`), `boquilla` y `emblema` (el símbolo de pokéball en relieve). Malla ([Objeto JSON](objeto-json.md#-objeto-malla)) |
+| `superpocion` · `ultrapocion` | La poción con otros colores: rosa y anaranjada (frasco, boquilla y emblema; el cabezal sigue blanco) |
+| `superball` · `ultraball` · `honorball` · `shinyball` | Esfera con banda y botón, con el interior de la pokeball: tapa azul con dos franjas rojas en relieve · gris con arcos amarillos y una «H» arriba · blanca con banda roja · turquesa con estrella, fondo negro y banda gris |
+| `revivir` · `max revivir` | Cristales de caras planas: dos pirámides pegadas por la base (16 × 25 cm, el alto de la pokeball) y estrella de seis pirámides (30 × 30 × 30 cm) |
+
+La pokeball y la starterball no son referencias: se construyen con `nuevo banda` y `starter`.
+
+Al pintar la poción, `frasco` arrastra a la `boquilla` (algo más clara) y al `emblema`, salvo que pidas su color en la misma petición («el frasco verde y la boquilla roja»). En el revivir, `cristal` (o «ponlo rojo») cambia el tono base y los otros tres (brillo, claro, oscuro) se derivan de él.
 
 ## 🪨 Texturas talladas
 
@@ -79,6 +98,7 @@ Reglas:
 - Una **hoja con varias vistas** (una sola imagen apaisada, fondo claro, vistas una al lado de otra) se separa sola: de izquierda a derecha frente, lateral izquierda, arriba, detrás y abajo (con menos vistas, las primeras). Las medidas salen de los píxeles de la hoja; sin altura se usa 0,3 m, así que di «de 70 cm de alto» (los números escritos en la imagen no se leen).
 - Las imágenes **sin nombre de vista** rellenan «frente» y «lateral» si faltan; las demás se ignoran con un aviso.
 - Fotos en perspectiva (3/4) no sirven como vista: la forma sale de siluetas planas.
+- Un modelo **`.stl`** adjunto (convención de Blender: Z arriba, el objeto mira hacia −Y; la escala sale del alto pedido) se convierte en siluetas de las seis vistas y sigue el mismo camino.
 - Un **JSON** adjunto se toma como objeto de partida («cambia esto…»).
 - Un archivo de otro tipo no se lee: se avisa con su nombre.
 
@@ -98,7 +118,7 @@ Pasa ese archivo para reentrenar con los casos reales ([Desarrollo](desarrollo.m
 
 ## 🚧 Lo que no hace
 
-- No inventa formas: construye con sus piezas (esferas, bandas, cuerdas, cadenas, adornos) o con las imágenes que le des.
+- No inventa formas: construye con sus piezas (esferas, bandas, cuerdas, cadenas, adornos), con las imágenes o el `.stl` que le des o con los objetos registrados en el catálogo.
 - El tallado solo se aplica a lo dibujado en la textura.
 - Convertir un triskel plano en relieve de geometría solo cambia su color.
 - Una frase muy corta como «ahora un triskel … de 15 cm» puede leer los 15 cm como el tamaño del objeto en vez del triskel.

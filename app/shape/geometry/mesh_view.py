@@ -11,12 +11,6 @@ AXES = {"frente": ((1, 0, 0), (0, 1, 0), (0, 0, 1)), "detras": ((-1, 0, 0), (0, 
 LIGHT = np.array([-0.4, 0.6, 0.7]) / np.linalg.norm([-0.4, 0.6, 0.7])    # respecto al observador (x derecha, y arriba, z hacia él)
 
 
-def bounds(mesh):
-    """(ancho, alto, fondo) en metros de la caja de la malla."""
-    V = mesh["vertices"]
-    return tuple(float(v) for v in V.max(axis=0) - V.min(axis=0))
-
-
 def draw_mesh(mesh, name, frame):
     """(rgb float (h, w, 3), silueta bool (h, w)) de la vista «name» dentro de «frame» (cuadro 0..ancho × 0..alto de esa vista)."""
     V, F, zones = mesh["vertices"], mesh["faces"], mesh["zones"]

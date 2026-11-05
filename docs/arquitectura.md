@@ -40,15 +40,15 @@ flowchart TD
 JanusApp/
 ├── .github/workflows/build_release.yml
 ├── app/
-│   ├── assets/        logo.ico · logo.png · scripts/update.ps1 · ia/janus_ia.npz
+│   ├── assets/        logo.ico · logo.png · scripts/update.ps1 · ia/janus_ia.npz · ia/janus_catalogo.db · ia/janus_catalogo.sql
 │   ├── ai/
-│   │   ├── fast/        asistente · modelo · programa · texto · colores · imagen3d · registro
+│   │   ├── fast/        asistente · modelo · programa · texto · colores · catalogo · imagen3d · malla3d · registro
 │   │   └── assistant/   ops · ejemplos · vision        (las piezas con las que construye la IA)
 │   ├── gui/           main_window · home_page · shape_page · ai_chat · widgets · viewer · theme · update_window
 │   ├── managers/      app_manager · shape_manager · update_manager
 │   ├── shape/
 │   │   ├── spec/        schema · raster · blueprint · preview · marks      (JSON → siluetas, colores, marcas)
-│   │   ├── geometry/    primitive · protrusion · ellipsoid · relief · opening · field · cut · qem · surface_nets · mesh_ops · coords
+│   │   ├── geometry/    primitive · protrusion · ellipsoid · relief · opening · field · cut · qem · surface_nets · mesh_ops · mesh_object · mesh_view · coords
 │   │   ├── texture/     atlas · interior
 │   │   ├── rig/         skeleton
 │   │   ├── storage/     export · project
@@ -116,6 +116,8 @@ La IA **no usa hilos**: responde en ~10 ms, de forma síncrona. Si se cierra la 
 | `fast/texto` | `prepare` (normaliza y extrae `#hex`/medidas), `Vocab` (erratas → palabra conocida) |
 | `fast/programa` | `state` (fichas de contexto) y `run` (ejecuta el programa; solo cambia lo que se pidió) |
 | `fast/colores` | Palabras de color (entrenamiento y comprobación) |
+| `fast/catalogo` | Lectura (solo lectura) del catálogo SQLite: colores, zonas, formas, órdenes, plantillas, objetos y **referencias** (objetos registrados) |
+| `fast/malla3d` | Modelos `.stl` → siluetas de las seis vistas |
 | `fast/imagen3d` | Imágenes → silueta + colores por vista → JSON |
 | `fast/registro` | `peticiones.jsonl` |
 | `assistant/ops` | Piezas: `band_by`, `convert_reliefs`, `add_ornament`, `carve_texture`, `apply_ops`… |

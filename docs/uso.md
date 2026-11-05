@@ -37,7 +37,7 @@ Junto al `.exe` se crea `app/` con los datos del usuario, que **una actualizaci�
 | Elemento | Qué hace |
 |---|---|
 | Cuadro de texto | Enter envía · Shift+Enter, salto de línea |
-| **Adjuntar** (o arrastrar al chat) | Imágenes (PNG, JPG, JFIF, WEBP, BMP, GIF, TIF, TGA, SVG) y un JSON de objeto |
+| **Adjuntar** (o arrastrar al chat) | Imágenes (PNG, JPG, JFIF, WEBP, BMP, GIF, TIF, TGA, SVG), un modelo `.stl` y un JSON de objeto |
 | **Deshacer** | Vuelve al objeto anterior (hasta 30 pasos) |
 | **Nuevo** | Vacía el objeto y la conversación |
 | **Bien / Mal** | Valora la respuesta; con «Mal» puedes escribir qué querías. Queda en el registro de la IA |
@@ -50,6 +50,9 @@ Hazme una esfera con banda y botón, arriba roja y abajo blanca, con la banda ne
 Cambia la banda por una cuerda roja y añade un triskel arriba
 Ahora el triskel tallado en piedra, hacia adentro        (el tallado conserva el color de la tapa)
 Hazme la starterball
+Genera la superball · la ultra ball · la honor ball · la shinyball
+Genera la pocion · la superpocion · la ultrapocion       (y «pon el emblema azul», «ponla toda de rojo»)
+Genera el revivir · el max revivir
 Hazme a <nombre>, te paso imágenes     (con «frente» y «lateral» en el nombre de los archivos)
 Hazla el doble de grande · Quita los adornos · Pon la tapa verde oscuro
 ```
