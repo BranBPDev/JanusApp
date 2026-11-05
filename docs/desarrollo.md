@@ -67,9 +67,9 @@ Los objetos de malla se **generan con scripts** (cada uno escribe sus JSON en `t
 
 | Script | Genera |
 |---|---|
-| `testing/ia/crear_pocion.py` | `pocion` desde el STL y el sprite (zonas de color, símbolo en relieve, boquilla recortada), `superpocion` y `ultrapocion` |
+| `testing/ia/crear_pocion.py` | `pocion` desde el STL y el sprite (zonas de color, símbolo en relieve, boquilla recortada; escalada a 25 cm de alto), `superpocion` y `ultrapocion` |
 | `testing/ia/crear_balls.py` | `superball`, `ultraball`, `honorball`, `shinyball` a partir de la esfera con banda y botón |
-| `testing/ia/crear_revivir.py` | `revivir` y `maxrevivir` |
+| `testing/ia/crear_revivir.py` | `revivir` y `maxrevivir` (un color liso y una línea negra, en geometría, sobre cada arista) |
 
 **Añadir un objeto registrado**: 1) crear su JSON · 2) registrarlo con `catalogo_cli.py json` · 3) añadir su nombre a `datos.py` (`BALL_NAMES`, `POCION_VARIANT_NAMES`…, para la intención `i_ref`) · 4) reentrenar y comprobar «genera el/la …». Si sus zonas son nuevas, añadirlas a la tabla `zonas` con sus palabras. Los JSON de `testing/` no se versionan: la base de datos (`janus_catalogo.db`) es la que viaja con la aplicación.
 

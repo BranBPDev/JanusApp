@@ -73,13 +73,13 @@ def _num(tok, nums, where):
 def _slots(data, slot):
     tex = data.get("texturas", {})
     if slot in ("todo", "cuerpo"):
-        if "medio" in tex and "oscuro" in tex:
-            return ["medio"]                                                   # el cristal (revivir): un tono base y los demás derivados
+        if "cristal" in tex and "linea" in tex:
+            return ["cristal"]                                                 # el revivir: un solo color liso (las líneas negras no se pintan con «todo»)
         if "frasco" in tex:
             return [t for t in ("frasco", "tapa", "boquilla", "emblema") if t in tex]     # la poción: se pintan todas sus zonas
         return ["cuerpo"] if "cuerpo" in tex else [t for t in ("tapa", "fondo") if t in tex]
-    if slot == "frasco" and "frasco" not in tex and "medio" in tex and "oscuro" in tex:
-        return ["medio"]                                                       # «ponlo rojo» sin zona: el cristal
+    if slot == "frasco" and "frasco" not in tex and "cristal" in tex:
+        return ["cristal"]                                                     # «ponlo rojo» sin zona: el cristal
     if slot in ("tapa", "fondo", "boton") and "cuerpo" in tex:
         raise SpecError("Este objeto es de un solo color; pídelo «con banda» para poder colorear arriba y abajo por separado.")
     name = SLOT_TEXTURE.get(slot)
@@ -90,8 +90,8 @@ def _slots(data, slot):
     return [name]
 
 
-LIGHTER = {"medio": (("brillo", 0.55), ("claro", 0.3)), "frasco": (("frasco_claro", 0.18), ("frasco_brillo", 0.42), ("boquilla", 0.12), ("emblema", 0.0))}   # texturas que son la base aclarada hacia el blanco (la boquilla y el emblema siguen al frasco)
-DARKER = {"medio": (("oscuro", 0.72),), "tapa": (("tapa_sombra", 0.75),)}                                  # ...u oscurecida (la sombra del cabezal)
+LIGHTER = {"frasco": (("frasco_claro", 0.18), ("frasco_brillo", 0.42), ("boquilla", 0.12), ("emblema", 0.0))}   # texturas que son la base aclarada hacia el blanco (la boquilla y el emblema siguen al frasco)
+DARKER = {"tapa": (("tapa_sombra", 0.75),)}                                  # ...u oscurecida (la sombra del cabezal)
 
 
 def derived_shades(data, name, hx, skip=()):

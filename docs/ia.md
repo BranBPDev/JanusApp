@@ -64,14 +64,14 @@ Un **objeto registrado** (tabla `referencias`) es un JSON `janus.objeto/1` compl
 
 | Nombre (alias) | Qué es |
 |---|---|
-| `pocion` (`potion`, `spray`…) | Spray: frasco, cabezal blanco (`tapa`), `boquilla` y `emblema` (el símbolo de pokéball en relieve). Malla ([Objeto JSON](objeto-json.md#-objeto-malla)) |
+| `pocion` (`potion`, `spray`…) | Spray de 25 cm de alto (como la pokeball): frasco, cabezal blanco (`tapa`), `boquilla` y `emblema` (el símbolo de pokéball en relieve). Malla ([Objeto JSON](objeto-json.md#-objeto-malla)) |
 | `superpocion` · `ultrapocion` | La poción con otros colores: rosa y anaranjada (frasco, boquilla y emblema; el cabezal sigue blanco) |
 | `superball` · `ultraball` · `honorball` · `shinyball` | Esfera con banda y botón, con el interior de la pokeball: tapa azul con dos franjas rojas en relieve · gris con arcos amarillos y una «H» arriba · blanca con banda roja · turquesa con estrella, fondo negro y banda gris |
-| `revivir` · `max revivir` | Cristales de caras planas: dos pirámides pegadas por la base (16 × 25 cm, el alto de la pokeball) y estrella de seis pirámides (30 × 30 × 30 cm) |
+| `revivir` · `max revivir` | Cristal de **un solo color liso** con las aristas en negro y sin luces ni sombras propias: dos pirámides pegadas por la base (16 × 25 cm, el alto de la pokeball) y estrella de seis pirámides (30 × 30 × 30 cm) |
 
 La pokeball y la starterball no son referencias: se construyen con `nuevo banda` y `starter`.
 
-Al pintar la poción, `frasco` arrastra a la `boquilla` (algo más clara) y al `emblema`, salvo que pidas su color en la misma petición («el frasco verde y la boquilla roja»). En el revivir, `cristal` (o «ponlo rojo») cambia el tono base y los otros tres (brillo, claro, oscuro) se derivan de él.
+Al pintar la poción, `frasco` arrastra a la `boquilla` (algo más clara) y al `emblema`, salvo que pidas su color en la misma petición («el frasco verde y la boquilla roja»). En el revivir, `cristal` (o «ponlo rojo», «todo verde») cambia el color de todo el cristal; las líneas negras se quedan.
 
 ## 🪨 Texturas talladas
 
