@@ -18,7 +18,7 @@ class Part:
     open_angle: float = 0.0            # grados al abrir del todo
     joints: Optional[np.ndarray] = None    # (n,4) uint8: huesos que mueven cada vértice (si el modelo tiene esqueleto)
     weights: Optional[np.ndarray] = None   # (n,4) float32: peso de cada hueso (suman 1)
-    raised: Optional[np.ndarray] = None    # (m,) bool: caras de relieve (el visor las dibuja después de la pared sobre la que sobresalen)
+    raised: Optional[np.ndarray] = None    # (m,) float: +1 caras de relieve, -1 caras de fondo (el visor las dibuja después / antes que las demás al ordenar por profundidad)
 
 
 @dataclass

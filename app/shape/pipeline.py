@@ -240,7 +240,11 @@ def _mesh_object(bp, warnings, progress, t0):
         invoke_progress(progress, 0.3 + 0.55 * li / len(LOD_TOLERANCE), f"Construyendo LOD{li}...")
         uvs = np.repeat(zone_uv[z][:, None, :], 3, axis=1)
         verts, faces, nrm, uv = build_attributes(v, f, crease_normals(v, f, 40.0), uvs)
-        raised = np.isin(z, m.get("raised") or [-1]) if m.get("raised") else None
+        raised = None
+        if m.get("raised") or m.get("back"):
+            raised = np.isin(z, m.get("raised") or [-1]) * 1.0
+            for i, b in enumerate(m.get("back") or []):                  # «fondo»: se dibuja antes; la primera zona de la lista, la primera de todas
+                raised -= 6.0 * (len(m["back"]) - i) * (z == b)
         lods.append(Model([Part("body", verts.astype(np.float32), faces, nrm.astype(np.float32), uv.astype(np.float32), raised=raised)], tex))
     info = {"mode": "malla", "primitive": None, "primitive_iou": 1.0, "openable": False, "watertight": bool(is_watertight(F)),
             "texture": [tex.shape[0], tex.shape[1]], "seconds": round(time.time() - t0, 2), "triangles": [m_.triangles for m_ in lods],

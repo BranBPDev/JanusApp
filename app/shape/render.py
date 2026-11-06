@@ -31,8 +31,8 @@ class Scene:
         self.depth_bias = np.where(flat_uv, -0.02 * self.radius, 0.0)
         # relieves de una malla (símbolo de la poción): sobresalen de una pared con triángulos grandes; se acercan para que no los tape
         if any(p.raised is not None for p in self.parts):
-            raised = np.concatenate([np.zeros(len(p.faces), bool) if p.raised is None else p.raised for p in self.parts])
-            self.depth_bias = self.depth_bias + np.where(raised, 0.03 * self.radius, 0.0)
+            raised = np.concatenate([np.zeros(len(p.faces)) if p.raised is None else p.raised for p in self.parts])
+            self.depth_bias = self.depth_bias + 0.03 * self.radius * raised
 
     def _offsets(self):
         off, out = 0, []
