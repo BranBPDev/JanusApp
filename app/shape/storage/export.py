@@ -121,12 +121,28 @@ def write_glb(path, model, name="objeto", animation=True):
         if p.uvs is not None:
             attrs["TEXCOORD_0"] = add_acc(np.ascontiguousarray(p.uvs, "<f4").tobytes(), 34962, 5126, len(local), "VEC2")
         small = len(local) < 65536
-        idx = add_acc(np.ascontiguousarray(p.faces.reshape(-1), "<u2" if small else "<u4").tobytes(), 34963,
-                      5123 if small else 5125, int(p.faces.size), "SCALAR")
-        prim = {"attributes": attrs, "indices": idx, "mode": 4}
-        if model.texture is not None:
-            prim["material"] = 0
-        meshes.append({"name": p.name, "primitives": [prim]})
+        def index_acc(faces):
+            return add_acc(np.ascontiguousarray(faces.reshape(-1), "<u2" if small else "<u4").tobytes(), 34963,
+                           5123 if small else 5125, int(faces.size), "SCALAR")
+
+        prims = []
+        glass = None
+        if model.texture is not None and p.uvs is not None and int(model.texture[..., 3].min()) < 255:
+            # zonas translúcidas (cristal): las caras opacas y las translúcidas van en primitivas con material distinto (opaco / «BLEND»),
+            # así el motor dibuja primero lo opaco (el símbolo de dentro) y mezcla el cristal encima desde cualquier ángulo
+            th, tw = model.texture.shape[:2]
+            uv = p.uvs[p.faces].mean(axis=1)
+            fa = model.texture[np.clip((uv[:, 1] * th).astype(int), 0, th - 1), np.clip((uv[:, 0] * tw).astype(int), 0, tw - 1), 3]
+            glass = fa < 255
+        if glass is not None and glass.any() and not glass.all():
+            prims = [{"attributes": attrs, "indices": index_acc(p.faces[~glass]), "mode": 4, "material": 0},
+                     {"attributes": attrs, "indices": index_acc(p.faces[glass]), "mode": 4, "material": 1}]
+        else:
+            prim = {"attributes": attrs, "indices": index_acc(p.faces), "mode": 4}
+            if model.texture is not None:
+                prim["material"] = 1 if glass is not None and glass.all() else 0
+            prims = [prim]
+        meshes.append({"name": p.name, "primitives": prims})
 
         node = {"name": p.name, "mesh": len(meshes) - 1}
         if rigged:
@@ -183,9 +199,9 @@ def write_glb(path, model, name="objeto", animation=True):
             "materials": [{"name": "janus", "pbrMetallicRoughness": {
                 "baseColorTexture": {"index": 0}, "metallicFactor": 0.0, "roughnessFactor": 0.5}}],
         })
-        if int(model.texture[..., 3].min()) < 255:                      # zonas translúcidas (cristal): el material mezcla con lo de detrás
-            meta["materials"][0]["alphaMode"] = "BLEND"
-            meta["materials"][0]["doubleSided"] = True                  # el cristal se ve también por dentro (cara de atrás)
+        if int(model.texture[..., 3].min()) < 255:                      # cristal: mezcla con lo de detrás y se ve por las dos caras
+            meta["materials"].append({"name": "janus_cristal", "alphaMode": "BLEND", "doubleSided": True, "pbrMetallicRoughness": {
+                "baseColorTexture": {"index": 0}, "metallicFactor": 0.0, "roughnessFactor": 0.5}})
     meta.update({"bufferViews": views, "buffers": [{"byteLength": len(buf)}]})
 
     js = _pad(json.dumps(meta, separators=(",", ":")).encode(), b" ")
