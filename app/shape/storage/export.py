@@ -183,6 +183,8 @@ def write_glb(path, model, name="objeto", animation=True):
             "materials": [{"name": "janus", "pbrMetallicRoughness": {
                 "baseColorTexture": {"index": 0}, "metallicFactor": 0.0, "roughnessFactor": 0.5}}],
         })
+        if int(model.texture[..., 3].min()) < 255:                      # zonas translúcidas (cristal): el material mezcla con lo de detrás
+            meta["materials"][0]["alphaMode"] = "BLEND"
     meta.update({"bufferViews": views, "buffers": [{"byteLength": len(buf)}]})
 
     js = _pad(json.dumps(meta, separators=(",", ":")).encode(), b" ")

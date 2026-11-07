@@ -110,7 +110,12 @@ def parse_point(value, where):
 def _texture(name, t):
     where = f"texturas.{name}"
     if "color" in t:
-        return {"color": parse_color(t["color"], where)}
+        out = {"color": parse_color(t["color"], where)}
+        if "alfa" in t:                                      # opacidad 0-1 (cristal): solo la usan las mallas
+            if not isinstance(t["alfa"], (int, float)) or not 0.0 < t["alfa"] <= 1.0:
+                raise SpecError(f"{where}.alfa: debe ser un número entre 0 (invisible) y 1 (opaco).")
+            out["alfa"] = float(t["alfa"])
+        return out
     if "degradado" in t:
         g = t["degradado"]
         return {"desde": parse_color(g.get("desde"), where + ".desde"), "hasta": parse_color(g.get("hasta"), where + ".hasta"),
@@ -219,7 +224,9 @@ class ObjectSpec:
             V = np.array(m["vertices"], np.float64)
             F = np.array(m["caras"], np.int64)
             zones = np.array(m.get("zonas") or [0] * len(F), np.int64)
-            colors = [_flat_color(textures[c]) if c in textures else parse_color(c, "malla.colores") for c in (m.get("colores") or ["#c8c8d2"])]
+            names = m.get("colores") or ["#c8c8d2"]
+            colors = [_flat_color(textures[c]) if c in textures else parse_color(c, "malla.colores") for c in names]
+            alphas = [textures[c].get("alfa", 1.0) if c in textures else 1.0 for c in names]
         except SpecError:
             raise
         except Exception:
@@ -232,7 +239,7 @@ class ObjectSpec:
             raise SpecError("«malla»: «zonas» debe tener un número por cara y «colores» un color por zona.")
         raised = [int(z) for z in (m.get("relieve") or [])]
         back = [int(z) for z in (m.get("fondo") or [])]
-        return {"vertices": V, "faces": F.astype(np.int32), "zones": zones, "colors": colors, "raised": raised, "back": back}
+        return {"vertices": V, "faces": F.astype(np.int32), "zones": zones, "colors": colors, "alphas": alphas, "raised": raised, "back": back}
 
     def _check_reliefs(self):
         if not isinstance(self.reliefs, list):

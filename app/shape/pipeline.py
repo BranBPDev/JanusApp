@@ -233,7 +233,7 @@ def _mesh_object(bp, warnings, progress, t0):
     """Objeto que ya es una malla («malla» del JSON): una pieza con un color liso por zona y los LODs por simplificación."""
     m = bp.mesh
     V, F, zones = m["vertices"], m["faces"], m["zones"]
-    tex, zone_uv = mesh_object.zone_texture(m["colors"])
+    tex, zone_uv = mesh_object.zone_texture(m["colors"], m.get("alphas"))
     invoke_progress(progress, 0.2, "Optimizando LODs...")
     lods = []
     for li, (v, f, z) in enumerate(mesh_object.levels(V, F, zones, LOD_TOLERANCE)):

@@ -21,6 +21,7 @@ class Scene:
         self.by_name = {p.name: p for p in self.parts}
         self.faces = np.concatenate([p.faces + off for p, off in zip(self.parts, self._offsets())])
         self.base_color = self._face_colors()
+        self.face_alpha = self._face_alphas()
         self.face_uv = self._face_uvs()
         all_v = np.concatenate([self.posed(0.0)[0], self.posed(1.0)[0]])  # encuadre válido cerrado y abierto
         self.center = (all_v.min(axis=0) + all_v.max(axis=0)) / 2
@@ -33,6 +34,8 @@ class Scene:
         if any(p.raised is not None for p in self.parts):
             raised = np.concatenate([np.zeros(len(p.faces)) if p.raised is None else p.raised for p in self.parts])
             self.depth_bias = self.depth_bias + 0.03 * self.radius * raised
+        # caras translúcidas (cristal): lo que hay dentro va antes y ellas se mezclan encima, así que se dibujan las últimas
+        self.depth_bias = self.depth_bias + 1.0 * self.radius * (self.face_alpha < 0.999)
 
     def _offsets(self):
         off, out = 0, []
@@ -62,6 +65,21 @@ class Scene:
             y = np.clip((uv[:, 1] * h).astype(int), 0, h - 1)
             colors.append(tex[y, x, :3].astype(np.float64))
         return np.concatenate(colors)
+
+    def _face_alphas(self):
+        """Opacidad (0-1) de cada triángulo según el canal alfa de la textura (1 si no hay textura)."""
+        tex = self.model.texture
+        out = []
+        for p in self.parts:
+            if tex is None or p.uvs is None:
+                out.append(np.ones(len(p.faces)))
+                continue
+            uv = p.uvs[p.faces].mean(axis=1)
+            h, w = tex.shape[:2]
+            x = np.clip((uv[:, 0] * w).astype(int), 0, w - 1)
+            y = np.clip((uv[:, 1] * h).astype(int), 0, h - 1)
+            out.append(tex[y, x, 3] / 255.0)
+        return np.concatenate(out)
 
     def pose(self, phase: float):
         """Pose de prueba del esqueleto (movimiento genérico) para la fase dada, o None si el modelo no tiene esqueleto."""
@@ -128,5 +146,6 @@ class Scene:
         # se agranda cada triángulo ~0.7 px para que no queden rendijas entre vecinos
         c = scr.mean(axis=1, keepdims=True)
         d = scr - c
-        grown = c + d * (1 + 0.7 / np.maximum(np.linalg.norm(d, axis=2, keepdims=True), 1.0))
-        return {"polys": grown, "flat": flat, "shade": shade, "textured": textured, "coef": coef}
+        opaque = (self.face_alpha[order] >= 0.999)[:, None, None]        # las translúcidas no se agrandan: se mezclarían dos veces en el borde
+        grown = c + d * (1 + opaque * 0.7 / np.maximum(np.linalg.norm(d, axis=2, keepdims=True), 1.0))
+        return {"polys": grown, "flat": flat, "shade": shade, "textured": textured, "coef": coef, "alpha": (self.face_alpha[order] * 255).astype(int)}

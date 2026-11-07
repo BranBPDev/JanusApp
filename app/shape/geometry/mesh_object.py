@@ -6,12 +6,14 @@ from app.shape.geometry.qem import decimate
 BLOCK = 8          # lado (px) de cada bloque de color de la textura
 
 
-def zone_texture(colors):
-    """Textura con un bloque de color liso por zona: (imagen RGBA uint8, UV del centro de cada bloque)."""
+def zone_texture(colors, alphas=None):
+    """Textura con un bloque de color liso por zona: (imagen RGBA uint8, UV del centro de cada bloque). «alphas»: opacidad 0-1 de cada zona (cristal)."""
     n = len(colors)
     tex = np.full((BLOCK, BLOCK * n, 4), 255, np.uint8)
     for i, c in enumerate(colors):
         tex[:, i * BLOCK:(i + 1) * BLOCK, :3] = c
+        if alphas is not None:
+            tex[:, i * BLOCK:(i + 1) * BLOCK, 3] = int(round(255 * alphas[i]))
     uv = np.array([[(i * BLOCK + BLOCK / 2) / (BLOCK * n), 0.5] for i in range(n)])
     return tex, uv
 

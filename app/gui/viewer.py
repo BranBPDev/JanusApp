@@ -31,7 +31,7 @@ def draw_bones(p, scene, yaw, pitch, zoom, open_t, width, height, pose=None):
 def draw_scene(p, scene, brush, yaw, pitch, zoom, open_t, width, height, wireframe=False, pose=None):
     """Dibuja un Scene con el pintor dado (lo usan el visor y las miniaturas)."""
     d = scene.draw_list(yaw, pitch, zoom, open_t, width, height, pose)
-    polys, flat, shade, textured, coef = d["polys"], d["flat"], d["shade"], d["textured"], d["coef"]
+    polys, flat, shade, textured, coef, opacity = d["polys"], d["flat"], d["shade"], d["textured"], d["coef"], d["alpha"]
     p.setPen(QPen(QColor(10, 12, 20, 200), 0.8) if wireframe else Qt.NoPen)
     for i in range(len(polys)):
         poly = QPolygonF([QPointF(x, y) for x, y in polys[i]])
@@ -46,7 +46,7 @@ def draw_scene(p, scene, brush, yaw, pitch, zoom, open_t, width, height, wirefra
                 p.setBrush(QColor(0, 0, 0, alpha))
                 p.drawPolygon(poly)
         else:
-            p.setBrush(QColor(*flat[i]))
+            p.setBrush(QColor(*flat[i], int(opacity[i])))
             p.drawPolygon(poly)
 
 
