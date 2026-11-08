@@ -26,12 +26,12 @@ from app.utils.mask_util import grow, label
 VOLUME_BLUR = 1.2                          # desviación (voxels) del suavizado del casco visual
 CHART_BIAS = {"left": 0.8, "right": 0.8, "top": 0.8, "bottom": 0.8}   # objetos orgánicos: delante y detrás mandan, para no duplicar detalles (ojos)
 ATLAS_CAP = 1024                           # lado máximo de la textura de un volumen (px)
-LOD_TOLERANCE = (0.0012, 0.003, 0.01, 0.04)   # error medio admitido por nivel (fracción del tamaño del objeto)
-PRIMITIVE_GRID_ROUND = ((12, 6), (8, 4), (6, 2), (4, 2))   # (lados, anillos) por nivel
-PRIMITIVE_GRID_SHARP = ((16, 8), (12, 6), (8, 4), (8, 4))
-SHARP_CLEANUP = (0.03, 0.03, 0.05, 0.05)   # une las caras planas redundantes de cajas y cilindros
+LOD_TOLERANCE = (0.0012,)                  # solo se genera el LOD0: error medio admitido (fracción del tamaño del objeto)
+PRIMITIVE_GRID_ROUND = ((12, 6),)   # (lados, anillos)
+PRIMITIVE_GRID_SHARP = ((16, 8),)
+SHARP_CLEANUP = (0.03,)   # une las caras planas redundantes de cajas y cilindros
 RESOLUTION = 88
-LOD_TOLERANCE_RIG = (0.004, 0.008, 0.016, 0.03)   # con esqueleto la malla debe conservar el detalle para doblarse bien
+LOD_TOLERANCE_RIG = (0.004,)   # con esqueleto la malla debe conservar el detalle para doblarse bien
 RESOLUTION_RIG = 128
 PAD = 2
 
@@ -166,7 +166,7 @@ def generate_shape(bp: Blueprint, progress=None) -> ShapeResult:
 
         levels, cur_v, cur_f = [], V, F
         for li, tol in enumerate(LOD_TOLERANCE if skeleton is None else LOD_TOLERANCE_RIG):
-            a, b = 0.3 + 0.3 * li / 4, 0.3 + 0.3 * (li + 1) / 4
+            a, b = 0.3, 0.6
             msg = f"Optimizando LOD{li}..."
             invoke_progress(progress, a, msg)
             cur_v, cur_f = decimate(cur_v, cur_f, tol * size_ref, 12,
@@ -230,11 +230,11 @@ def _skeleton(joint_marks, masks, dims, flips, dims_m, warnings):
 
 
 def _mesh_object(bp, warnings, progress, t0):
-    """Objeto que ya es una malla («malla» del JSON): una pieza (o fija + móvil con bisagra) con un color liso por zona y los LODs por simplificación."""
+    """Objeto que ya es una malla («malla» del JSON): una pieza (o fija + móvil con bisagra) con un color liso por zona."""
     m = bp.mesh
     V, F, zones = m["vertices"], m["faces"], m["zones"]
     tex, zone_uv = mesh_object.zone_texture(m["colors"], m.get("alphas"))
-    invoke_progress(progress, 0.2, "Optimizando LODs...")
+    invoke_progress(progress, 0.2, "Preparando la malla...")
     if m.get("parts") is not None:             # fija + móvil: cada pieza se simplifica por separado
         pieces = [("fixed", m["parts"] == 0, {}), ("movable", m["parts"] == 1, {"origin": m["hinge"]["origin"], "axis": m["hinge"]["axis"],
                                                                                  "open_angle": m["hinge"]["angle"]})]

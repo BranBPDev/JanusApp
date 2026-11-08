@@ -91,7 +91,7 @@ class ShapePage(QWidget):
         bar = QHBoxLayout()
         self.lod_group = QButtonGroup(self)
         self.lod_buttons = []
-        for i in range(4):
+        for i in range(1):
             b = QPushButton(f"LOD{i}", objectName="Seg", checkable=True)
             b.setEnabled(False)
             self.lod_group.addButton(b, i)
