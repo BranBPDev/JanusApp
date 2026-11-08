@@ -230,23 +230,42 @@ def _skeleton(joint_marks, masks, dims, flips, dims_m, warnings):
 
 
 def _mesh_object(bp, warnings, progress, t0):
-    """Objeto que ya es una malla («malla» del JSON): una pieza con un color liso por zona y los LODs por simplificación."""
+    """Objeto que ya es una malla («malla» del JSON): una pieza (o fija + móvil con bisagra) con un color liso por zona y los LODs por simplificación."""
     m = bp.mesh
     V, F, zones = m["vertices"], m["faces"], m["zones"]
     tex, zone_uv = mesh_object.zone_texture(m["colors"], m.get("alphas"))
     invoke_progress(progress, 0.2, "Optimizando LODs...")
+    if m.get("parts") is not None:             # fija + móvil: cada pieza se simplifica por separado
+        pieces = [("fixed", m["parts"] == 0, {}), ("movable", m["parts"] == 1, {"origin": m["hinge"]["origin"], "axis": m["hinge"]["axis"],
+                                                                                 "open_angle": m["hinge"]["angle"]})]
+    else:
+        pieces = [("body", np.ones(len(F), bool), {})]
+    split = []
+    for name, sel, extra in pieces:
+        if sel.all():
+            split.append((name, mesh_object.levels(V, F, zones, LOD_TOLERANCE), extra))
+            continue
+        Fp = F[sel]
+        used = np.unique(Fp)
+        remap = np.full(len(V), -1)
+        remap[used] = np.arange(len(used))
+        split.append((name, mesh_object.levels(V[used], remap[Fp].astype(np.int32), zones[sel], LOD_TOLERANCE), extra))
     lods = []
-    for li, (v, f, z) in enumerate(mesh_object.levels(V, F, zones, LOD_TOLERANCE)):
+    for li in range(len(LOD_TOLERANCE)):
         invoke_progress(progress, 0.3 + 0.55 * li / len(LOD_TOLERANCE), f"Construyendo LOD{li}...")
-        uvs = np.repeat(zone_uv[z][:, None, :], 3, axis=1)
-        verts, faces, nrm, uv = build_attributes(v, f, crease_normals(v, f, 40.0), uvs)
-        raised = None
-        if m.get("raised") or m.get("back"):
-            raised = np.isin(z, m.get("raised") or [-1]) * 1.0
-            for i, b in enumerate(m.get("back") or []):                  # «fondo»: se dibuja antes; la primera zona de la lista, la primera de todas
-                raised -= 6.0 * (len(m["back"]) - i) * (z == b)
-        lods.append(Model([Part("body", verts.astype(np.float32), faces, nrm.astype(np.float32), uv.astype(np.float32), raised=raised)], tex))
-    info = {"mode": "malla", "primitive": None, "primitive_iou": 1.0, "openable": False, "watertight": bool(is_watertight(F)),
+        parts = []
+        for name, lv, extra in split:
+            v, f, z = lv[li]
+            uvs = np.repeat(zone_uv[z][:, None, :], 3, axis=1)
+            verts, faces, nrm, uv = build_attributes(v, f, crease_normals(v, f, 40.0), uvs)
+            raised = None
+            if m.get("raised") or m.get("back"):
+                raised = np.isin(z, m.get("raised") or [-1]) * 1.0
+                for i, b in enumerate(m.get("back") or []):                  # «fondo»: se dibuja antes; la primera zona de la lista, la primera de todas
+                    raised -= 6.0 * (len(m["back"]) - i) * (z == b)
+            parts.append(Part(name, verts.astype(np.float32), faces, nrm.astype(np.float32), uv.astype(np.float32), raised=raised, **extra))
+        lods.append(Model(parts, tex))
+    info = {"mode": "malla", "primitive": None, "primitive_iou": 1.0, "openable": m.get("parts") is not None, "watertight": bool(is_watertight(F)),
             "texture": [tex.shape[0], tex.shape[1]], "seconds": round(time.time() - t0, 2), "triangles": [m_.triangles for m_ in lods],
             "size": [round(x, 4) for x in lods[0].size], "metric": {"height_m": bp.dims_m[1], "width_m": bp.dims_m[0], "depth_m": bp.dims_m[2]}}
     invoke_progress(progress, 0.92, "Modelo generado")

@@ -217,7 +217,9 @@ class ObjectSpec:
     @staticmethod
     def _check_mesh(m, textures):
         """«malla» (opcional): el modelo 3d tal cual, en metros con Y arriba, la base en y = 0 y el frente hacia +Z.
-        {"vertices": [[x, y, z]…], "caras": [[i, j, k]…], "zonas": [zona de cada cara], "colores": [«#rrggbb» o nombre de una textura de color, de cada zona]}."""
+        {"vertices": [[x, y, z]…], "caras": [[i, j, k]…], "zonas": [zona de cada cara], "colores": [«#rrggbb» o nombre de una textura de color, de cada zona],
+        "partes": [0 = fija, 1 = móvil, de cada cara], "bisagra": {"origen": [x, y, z], "eje": [x, y, z], "grados": -105}}   (las dos últimas, opcionales: la pieza móvil
+        gira sobre el eje que pasa por «origen» hasta «grados»; así se abre, por ejemplo, la tapa de un cofre)."""
         if m is None:
             return None
         try:
@@ -239,7 +241,19 @@ class ObjectSpec:
             raise SpecError("«malla»: «zonas» debe tener un número por cara y «colores» un color por zona.")
         raised = [int(z) for z in (m.get("relieve") or [])]
         back = [int(z) for z in (m.get("fondo") or [])]
-        return {"vertices": V, "faces": F.astype(np.int32), "zones": zones, "colors": colors, "alphas": alphas, "raised": raised, "back": back}
+        parts, hinge = None, None
+        if m.get("partes") is not None:
+            try:
+                parts = np.array(m["partes"], np.int64)
+                h = m["bisagra"]
+                hinge = {"origin": tuple(float(c) for c in h["origen"]), "axis": tuple(float(c) for c in h["eje"]), "angle": float(h["grados"])}
+                ok = len(hinge["origin"]) == 3 and len(hinge["axis"]) == 3 and any(hinge["axis"])
+            except Exception:
+                ok = False
+            if not ok or parts.shape != (len(F),) or not np.isin(parts, (0, 1)).all():
+                raise SpecError("«malla»: «partes» debe tener un 0 (fija) o 1 (móvil) por cara y «bisagra» un «origen» [x, y, z], un «eje» [x, y, z] y «grados».")
+        return {"vertices": V, "faces": F.astype(np.int32), "zones": zones, "colors": colors, "alphas": alphas, "raised": raised, "back": back,
+                "parts": parts, "hinge": hinge}
 
     def _check_reliefs(self):
         if not isinstance(self.reliefs, list):
