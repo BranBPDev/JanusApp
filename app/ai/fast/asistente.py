@@ -10,7 +10,7 @@ from app.ai.assistant import vision
 from app.ai.fast import catalogo, imagen3d, programa, registro
 from app.ai.fast.colores import bases_in
 from app.ai.fast.modelo import FastModel
-from app.ai.fast.texto import prepare
+from app.ai.fast.texto import UNK, prepare
 from app.shape.spec.schema import FORMAT, SpecError
 from app.utils.mask_util import border, flood
 
@@ -80,8 +80,12 @@ class Asistente:
         except Exception:
             return None
         text = " " + " ".join(words) + " "
-        found = [(len(n), name) for name, (aliases, *_rest) in refs.items() for n in [name] + aliases if f" {n} " in text]
-        return max(found)[1] if found else None        # el nombre más largo: «super pocion» antes que «pocion»
+        found = [(len(n), name, n) for name, (aliases, *_rest) in refs.items() for n in [name] + aliases if f" {n} " in text]
+        if not found:
+            return None
+        best = max(found)                              # el nombre más largo: «super pocion» antes que «pocion»
+        Asistente._named = set(best[2].split())
+        return best[1]
 
     def pedir(self, text, spec, adjuntos=(), **_) -> Resultado:
         t0 = time.perf_counter()
@@ -121,7 +125,10 @@ class Asistente:
                 ctx.append("img_hoja")                  # una sola imagen apaisada sin nombre de vista: suele ser una hoja con varias vistas
             if models:
                 ctx.append("img_modelo")
+        Asistente._named = set()
         known = self._reference(words)
+        if known:                                       # las palabras del nombre registrado no se confunden con colores («roca» ≠ «rosa»)
+            words = [w if (w not in Asistente._named or w in self.model.vocab.stoi) else UNK for w in words]
         if known:
             ctx.append("ref")                           # el texto nombra un objeto registrado en el catálogo (tabla referencias)
         prog = self.model.generate(ctx, words)
