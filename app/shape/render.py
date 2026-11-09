@@ -2,6 +2,7 @@ import math
 
 import numpy as np
 
+from app.shape.zbuffer import shade, visibility, fragments
 from app.shape.rig.skeleton import pose_frames, rotation_matrix, skin_vertices, swing_rotations
 
 _LIGHT = np.array([-0.4, 0.6, 0.7]) / np.linalg.norm([-0.4, 0.6, 0.7])
@@ -20,22 +21,24 @@ class Scene:
         self.parts = model.parts
         self.by_name = {p.name: p for p in self.parts}
         self.faces = np.concatenate([p.faces + off for p, off in zip(self.parts, self._offsets())])
+        self.tex = self._reduced(model.texture)
         self.base_color = self._face_colors()
         self.face_alpha = self._face_alphas()
         self.face_uv = self._face_uvs()
         all_v = np.concatenate([self.posed(0.0)[0], self.posed(1.0)[0]])  # encuadre válido cerrado y abierto
         self.center = (all_v.min(axis=0) + all_v.max(axis=0)) / 2
         self.radius = float(np.linalg.norm(all_v - self.center, axis=1).max()) or 1.0
-        # caras interiores/bordes (UV constante): se dibujan "más lejos" para que el orden por profundidad no las cuele
-        flat_uv = np.zeros(len(self.faces), bool) if self.face_uv is None else \
-            np.abs(self.face_uv - self.face_uv[:, :1]).max(axis=(1, 2)) < 1e-6
-        self.depth_bias = np.where(flat_uv, -0.02 * self.radius, 0.0)
-        # relieves de una malla (símbolo de la poción): sobresalen de una pared con triángulos grandes; se acercan para que no los tape
-        if any(p.raised is not None for p in self.parts):
-            raised = np.concatenate([np.zeros(len(p.faces)) if p.raised is None else p.raised for p in self.parts])
-            self.depth_bias = self.depth_bias + 0.03 * self.radius * raised
-        # caras translúcidas (cristal): lo que hay dentro va antes y ellas se mezclan encima, así que se dibujan las últimas
-        self.depth_bias = self.depth_bias + 1.0 * self.radius * (self.face_alpha < 0.999)
+
+    @staticmethod
+    def _reduced(tex, side=1024):
+        """Textura reducida (promedio por bloques) para que al verla pequeña no parpadee."""
+        if tex is None:
+            return None
+        k = max(1, max(tex.shape[:2]) // side)
+        if k == 1:
+            return tex
+        h, w = tex.shape[0] // k * k, tex.shape[1] // k * k
+        return tex[:h, :w].astype(np.float32).reshape(h // k, k, w // k, k, 4).mean(axis=(1, 3)).astype(np.uint8)
 
     def _offsets(self):
         off, out = 0, []
@@ -46,14 +49,14 @@ class Scene:
 
     def _face_uvs(self):
         """UV de cada triángulo en píxeles de textura (m,3,2), o None si no hay textura."""
-        tex = self.model.texture
+        tex = self.tex
         if tex is None or any(p.uvs is None for p in self.parts):
             return None
         h, w = tex.shape[:2]
         return np.concatenate([p.uvs[p.faces] for p in self.parts]).astype(np.float64) * np.array([w, h])
 
     def _face_colors(self):
-        tex = self.model.texture
+        tex = self.tex
         colors = []
         for p in self.parts:
             if tex is None or p.uvs is None:
@@ -68,7 +71,7 @@ class Scene:
 
     def _face_alphas(self):
         """Opacidad (0-1) de cada triángulo según el canal alfa de la textura (1 si no hay textura)."""
-        tex = self.model.texture
+        tex = self.tex
         out = []
         for p in self.parts:
             if tex is None or p.uvs is None:
@@ -118,34 +121,59 @@ class Scene:
             norms.append(N)
         return np.concatenate(verts), np.concatenate(norms)
 
-    def draw_list(self, yaw, pitch, zoom, t, width, height, pose=None):
+    def screen(self, yaw, pitch, zoom, t, width, height, pose=None, ss=1):
+        """Triángulos proyectados: pantalla (k,3,2) en píxeles de (width*ss, height*ss), profundidad (k,3) y normales (k,3,3) giradas."""
         V, N = self.posed(t, pose)
         V = V - self.center
         cy, sy, cp, sp = math.cos(yaw), math.sin(yaw), math.cos(pitch), math.sin(pitch)
         rot = np.array([[1, 0, 0], [0, cp, -sp], [0, sp, cp]]) @ np.array([[cy, 0, sy], [0, 1, 0], [-sy, 0, cy]])
         vr, nr = V @ rot.T, N @ rot.T
+        scale = min(width, height) * 0.42 / self.radius * zoom * ss
+        sx = width * ss / 2 + vr[:, 0] * scale
+        sy_ = height * ss / 2 - vr[:, 1] * scale
         f = self.faces
-        geo = np.cross(vr[f[:, 1]] - vr[f[:, 0]], vr[f[:, 2]] - vr[f[:, 0]])
-        vis = np.nonzero(geo[:, 2] > 0)[0]
-        order = vis[np.argsort(vr[f[vis], 2].mean(axis=1) + self.depth_bias[vis])]
-        shade = 0.4 + 0.6 * np.clip(nr[f[order]].mean(axis=1) @ _LIGHT, 0, 1)
-        scale = min(width, height) * 0.42 / self.radius * zoom
-        sx = width / 2 + vr[:, 0] * scale
-        sy_ = height / 2 - vr[:, 1] * scale
-        tri = f[order]
-        scr = np.stack([sx[tri], sy_[tri]], axis=2)            # (k,3,2)
-        flat = np.clip(self.base_color[order] * shade[:, None], 0, 255).astype(int)
-        coef, textured = None, np.zeros(len(order), bool)
-        if self.face_uv is not None:
-            uv = self.face_uv[order]
-            m = np.concatenate([uv, np.ones((len(order), 3, 1))], axis=2)
-            textured = np.abs(np.linalg.det(m)) > 1e-6
-            coef = np.zeros((len(order), 3, 2))
-            if textured.any():
-                coef[textured] = np.linalg.solve(m[textured], scr[textured])
-        # se agranda cada triángulo ~0.7 px para que no queden rendijas entre vecinos
-        c = scr.mean(axis=1, keepdims=True)
-        d = scr - c
-        opaque = (self.face_alpha[order] >= 0.999)[:, None, None]        # las translúcidas no se agrandan: se mezclarían dos veces en el borde
-        grown = c + d * (1 + opaque * 0.7 / np.maximum(np.linalg.norm(d, axis=2, keepdims=True), 1.0))
-        return {"polys": grown, "flat": flat, "shade": shade, "textured": textured, "coef": coef, "alpha": (self.face_alpha[order] * 255).astype(int)}
+        scr = np.stack([sx[f], sy_[f]], axis=2)
+        return scr, vr[f][:, :, 2], nr[f]
+
+    def render(self, yaw, pitch, zoom, t, width, height, pose=None, ss=1):
+        """Imagen uint8 (alto,ancho,4) con alfa premultiplicado y fondo transparente, dibujada con z-buffer, y los triángulos visibles.
+        ss > 1 (entero): supermuestreo con suavizado de bordes; ss < 1: borrador a menor resolución (la imagen es más pequeña)."""
+        W, H = max(1, round(width * ss)), max(1, round(height * ss))
+        P, Z, Nf = self.screen(yaw, pitch, zoom, t, width, height, pose, ss)
+        geo = (P[:, 1, 0] - P[:, 0, 0]) * (P[:, 2, 1] - P[:, 0, 1]) - (P[:, 2, 0] - P[:, 0, 0]) * (P[:, 1, 1] - P[:, 0, 1])
+        back = geo > 0                                                     # eje y de pantalla hacia abajo: horario en pantalla = cara trasera
+        Nf = np.where(back[:, None, None], -Nf, Nf)                        # caras opacas por las dos caras: la normal mira siempre a la cámara
+        opaque = np.nonzero(self.face_alpha >= 0.999)[0]
+        glass = np.nonzero((self.face_alpha < 0.999) & ~back)[0]
+        color = np.zeros((W * H, 3))
+        cover = np.zeros(W * H)
+        zbuf, idbuf = visibility(P[opaque], Z[opaque], W, H)
+        pix = np.nonzero(idbuf >= 0)[0]
+        if len(pix):
+            tri = opaque[idbuf[pix]]
+            col, _ = shade(P, tri, pix, W, Nf, self.face_uv, self.base_color, self.tex, _LIGHT)
+            color[pix], cover[pix] = col, 1.0
+        if len(glass):                                                     # cristal: capas de atrás adelante, mezcladas encima de lo opaco
+            fp, fz, ft = [], [], []
+            for p_, z_, t_ in fragments(P[glass], Z[glass], W, H):
+                keep = z_ > zbuf[p_]
+                fp.append(p_[keep]); fz.append(z_[keep]); ft.append(glass[t_[keep]])
+            if fp and len(np.concatenate(fp)):
+                fp, fz, ft = np.concatenate(fp), np.concatenate(fz), np.concatenate(ft)
+                o = np.lexsort((fz, fp))
+                fp, ft = fp[o], ft[o]
+                first = np.ones(len(fp), bool)
+                first[1:] = fp[1:] != fp[:-1]
+                rank = np.arange(len(fp)) - np.maximum.accumulate(np.where(first, np.arange(len(fp)), 0))
+                col, a = shade(P, ft, fp, W, Nf, self.face_uv, self.base_color, self.tex, _LIGHT)
+                for r in range(int(rank.max()) + 1):
+                    m = rank == r
+                    pp, aa = fp[m], a[m]
+                    color[pp] = col[m] * aa[:, None] + color[pp] * (1 - aa[:, None])
+                    cover[pp] = aa + cover[pp] * (1 - aa)
+        rgba = np.concatenate([color, cover[:, None] * 255], axis=1).reshape(H, W, 4)      # color ya va premultiplicado
+        if ss > 1 and ss == int(ss):
+            ss = int(ss)
+            rgba = rgba.reshape(height, ss, width, ss, 4).mean(axis=(1, 3))
+        visible = np.unique(opaque[idbuf[idbuf >= 0]])
+        return np.clip(rgba + 0.5, 0, 255).astype(np.uint8), visible

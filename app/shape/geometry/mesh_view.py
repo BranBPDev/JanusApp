@@ -1,7 +1,8 @@
 """Vistas ortográficas de una «malla» del JSON (frente, detrás, izquierda, derecha, arriba, abajo): la vista previa de un objeto con
 malla se dibuja desde la propia malla, con el color de cada zona, y no desde imágenes aparte."""
 import numpy as np
-from PIL import Image, ImageDraw
+
+from app.shape.zbuffer import visibility
 
 # filas: dirección en el modelo de «derecha de la imagen», «arriba de la imagen» y «hacia el observador»
 # (modelo: Y arriba, frente hacia +Z; en «izquierda» el frente queda a la izquierda de la imagen, como en el resto de vistas del formato)
@@ -22,16 +23,11 @@ def draw_mesh(mesh, name, frame):
     norm = np.linalg.norm(n, axis=1, keepdims=True)
     n = n / np.where(norm > 0, norm, 1)
     vis = np.nonzero((n[:, 2] > 0) & (norm[:, 0] > 0))[0]          # solo las caras que miran al observador
-    order = vis[np.argsort(tri[vis, :, 2].mean(axis=1))]           # de lejos a cerca
-    shade = 0.45 + 0.55 * np.clip(n[order] @ LIGHT, 0, 1)
-    colors = np.array(mesh["colors"], np.float64)[zones[order]]
-    px = (tri[order, :, 0] - frame.ox) * frame.k
-    py = frame.h - (tri[order, :, 1] - frame.oy) * frame.k
-    img = Image.new("RGB", (frame.w, frame.h), (0, 0, 0))
-    sil = Image.new("L", (frame.w, frame.h), 0)
-    d, ds = ImageDraw.Draw(img), ImageDraw.Draw(sil)
-    for i in range(len(order)):
-        poly = [(px[i, 0], py[i, 0]), (px[i, 1], py[i, 1]), (px[i, 2], py[i, 2])]
-        d.polygon(poly, fill=tuple(int(c) for c in np.clip(colors[i] * shade[i], 0, 255)))
-        ds.polygon(poly, fill=255)
-    return np.asarray(img, np.float32), np.asarray(sil) > 127
+    shade = 0.45 + 0.55 * np.clip(n[vis] @ LIGHT, 0, 1)
+    colors = np.array(mesh["colors"], np.float64)[zones[vis]] * shade[:, None]
+    scr = np.stack([(tri[vis, :, 0] - frame.ox) * frame.k, frame.h - (tri[vis, :, 1] - frame.oy) * frame.k], axis=2)
+    _, ids = visibility(scr, tri[vis, :, 2], frame.w, frame.h)       # z-buffer: lo más cercano de cada píxel, sin depender del orden
+    img = np.zeros((frame.h * frame.w, 3), np.float32)
+    seen = ids >= 0
+    img[seen] = np.clip(colors[ids[seen]], 0, 255)
+    return img.reshape(frame.h, frame.w, 3), seen.reshape(frame.h, frame.w)

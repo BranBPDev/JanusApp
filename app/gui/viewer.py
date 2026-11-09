@@ -1,19 +1,18 @@
+import threading
+
 import numpy as np
-from PySide6.QtCore import QPointF, QRect, Qt, QTimer
-from PySide6.QtGui import QBrush, QColor, QImage, QPainter, QPen, QPixmap, QPolygonF, QTransform
+from PySide6.QtCore import QPointF, QRect, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap, QPolygonF
 from PySide6.QtWidgets import QWidget
 
 from app.gui.theme import COLORS
 from app.shape.render import Scene
 
 
-def texture_brush(model):
-    """Pincel con la textura del modelo (o None si no tiene)."""
-    tex = model.texture
-    if tex is None:
-        return None
-    data = np.ascontiguousarray(tex)
-    return QBrush(QImage(data.data, data.shape[1], data.shape[0], data.shape[1] * 4, QImage.Format_RGBA8888).copy())
+def to_qimage(rgba):
+    """QImage (RGBA premultiplicado) a partir de la matriz que devuelve Scene.render."""
+    data = np.ascontiguousarray(rgba)
+    return QImage(data.data, data.shape[1], data.shape[0], data.shape[1] * 4, QImage.Format_RGBA8888_Premultiplied).copy()
 
 
 def draw_bones(p, scene, yaw, pitch, zoom, open_t, width, height, pose=None):
@@ -28,26 +27,12 @@ def draw_bones(p, scene, yaw, pitch, zoom, open_t, width, height, pose=None):
         p.drawEllipse(QPointF(x, y), 3.5, 3.5)
 
 
-def draw_scene(p, scene, brush, yaw, pitch, zoom, open_t, width, height, wireframe=False, pose=None):
-    """Dibuja un Scene con el pintor dado (lo usan el visor y las miniaturas)."""
-    d = scene.draw_list(yaw, pitch, zoom, open_t, width, height, pose)
-    polys, flat, shade, textured, coef, opacity = d["polys"], d["flat"], d["shade"], d["textured"], d["coef"], d["alpha"]
-    p.setPen(QPen(QColor(10, 12, 20, 200), 0.8) if wireframe else Qt.NoPen)
-    for i in range(len(polys)):
-        poly = QPolygonF([QPointF(x, y) for x, y in polys[i]])
-        if textured[i] and brush is not None:
-            a, b, c = coef[i, :, 0]
-            dd, e, f = coef[i, :, 1]
-            brush.setTransform(QTransform(a, dd, b, e, c, f))
-            p.setBrush(brush)
-            p.drawPolygon(poly)
-            alpha = int((1.0 - shade[i]) * 255)
-            if alpha > 0:  # sombreado: velo negro más o menos opaco
-                p.setBrush(QColor(0, 0, 0, alpha))
-                p.drawPolygon(poly)
-        else:
-            p.setBrush(QColor(*flat[i], int(opacity[i])))
-            p.drawPolygon(poly)
+def draw_wire(p, scene, visible, yaw, pitch, zoom, open_t, width, height, pose=None):
+    """Aristas de los triángulos visibles (sin las ocultas)."""
+    P, _, _ = scene.screen(yaw, pitch, zoom, open_t, width, height, pose, 1)
+    p.setPen(QPen(QColor(10, 12, 20, 200), 0.8))
+    for a, b, c in P[visible]:
+        p.drawPolygon(QPolygonF([QPointF(*a), QPointF(*b), QPointF(*c)]))
 
 
 def render_thumbnail(model, max_side: int = 64, yaw: float = 0.5, pitch: float = 0.25, size: int = 192):
@@ -57,7 +42,8 @@ def render_thumbnail(model, max_side: int = 64, yaw: float = 0.5, pitch: float =
     p = QPainter(image)
     p.setRenderHint(QPainter.Antialiasing)
     p.setRenderHint(QPainter.SmoothPixmapTransform)
-    draw_scene(p, Scene(model), texture_brush(model), yaw, pitch, 1.0, 0.0, size, size)
+    img, _ = Scene(model).render(yaw, pitch, 1.0, 0.0, size, size, None, 2)
+    p.drawImage(0, 0, to_qimage(img))
     p.end()
     alpha = np.frombuffer(image.constBits(), np.uint8).reshape(size, image.bytesPerLine() // 4, 4)[:, :size, 3]
     ys, xs = np.where(alpha > 8)
@@ -67,7 +53,10 @@ def render_thumbnail(model, max_side: int = 64, yaw: float = 0.5, pitch: float =
 
 
 class MeshViewer(QWidget):
-    """Visor ligero por software: texturas, apertura de piezas, rotación con ratón y zoom con rueda."""
+    """Visor por software con z-buffer: texturas, apertura de piezas, rotación con ratón y zoom con rueda.
+    Mientras se mueve se dibuja un borrador a media resolución; al parar se calcula en segundo plano la imagen con suavizado."""
+
+    _done = Signal(object, object)
 
     def __init__(self):
         super().__init__()
@@ -80,24 +69,36 @@ class MeshViewer(QWidget):
         self._timer = QTimer(self)
         self._timer.setInterval(33)
         self._timer.timeout.connect(self._tick)
+        self._settle = QTimer(self)
+        self._settle.setSingleShot(True)
+        self._settle.setInterval(160)
+        self._settle.timeout.connect(self._start_hq)
+        self._done.connect(self._hq_ready)
         self._scene = None
-        self._brush = None
         self._last = None
+        self._draft = None         # (clave, imagen) del borrador
+        self._hq = None            # (clave, imagen) de la imagen final
+        self._job = 0
         self._reset_view()
 
     def _reset_view(self):
         self.yaw, self.pitch, self.zoom = 0.5, 0.25, 1.0
 
-    def set_model(self, model):
-        self._scene, self._brush = None, None
-        if model is not None:
-            self._scene = Scene(model)
-            self._brush = texture_brush(model)
+    def _key(self):
+        return (self.yaw, self.pitch, self.zoom, self.open_t, self.width(), self.height(), round(self._phase, 4) if self.animate else None, id(self._scene))
+
+    def _changed(self):
+        self._job += 1
         self.update()
+
+    def set_model(self, model):
+        self._scene = Scene(model) if model is not None else None
+        self._draft = self._hq = None
+        self._changed()
 
     def set_open(self, t: float):
         self.open_t = t
-        self.update()
+        self._changed()
 
     def set_animate(self, on: bool):
         self.animate = on
@@ -105,7 +106,7 @@ class MeshViewer(QWidget):
             self._timer.start()
         else:
             self._timer.stop()
-        self.update()
+        self._changed()
 
     def set_bones(self, on: bool):
         self.bones = on
@@ -113,30 +114,58 @@ class MeshViewer(QWidget):
 
     def _tick(self):
         self._phase += 0.12
-        self.update()
+        self._changed()
 
     def _pose(self):
         return self._scene.pose(self._phase) if self.animate and self._scene is not None else None
 
     def set_wireframe(self, on: bool):
         self.wireframe = on
-        self.update()
+        self._changed()
+
+    def _start_hq(self):
+        """Calcula en otro hilo la imagen final (supermuestreo 2x) de la vista actual."""
+        if self._scene is None or self.animate:
+            return
+        key, job = self._key(), self._job
+        args = (self._scene, self.yaw, self.pitch, self.zoom, self.open_t, self.width(), self.height())
+
+        def work():
+            img, _ = args[0].render(*args[1:], None, 2)
+            self._done.emit((key, job), to_qimage(img))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _hq_ready(self, tag, image):
+        key, job = tag
+        if job == self._job and key == self._key():
+            self._hq = (key, image)
+            self.update()
 
     def paintEvent(self, _):
         p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
         p.setRenderHint(QPainter.SmoothPixmapTransform)
         p.fillRect(self.rect(), QColor(COLORS["surface"]))
         if self._scene is None:
             p.setPen(QColor(COLORS["muted"]))
             p.drawText(self.rect(), Qt.AlignCenter, "El modelo aparecerá aquí")
             return
-
-        pose = self._pose()
-        draw_scene(p, self._scene, self._brush, self.yaw, self.pitch, self.zoom, self.open_t, self.width(), self.height(),
-                   self.wireframe, pose)
+        key, pose = self._key(), self._pose()
+        w, h = self.width(), self.height()
+        if self.wireframe:
+            img, visible = self._scene.render(self.yaw, self.pitch, self.zoom, self.open_t, w, h, pose, 1)
+            p.drawImage(0, 0, to_qimage(img))
+            draw_wire(p, self._scene, visible, self.yaw, self.pitch, self.zoom, self.open_t, w, h, pose)
+        elif self._hq is not None and self._hq[0] == key:
+            p.drawImage(self.rect(), self._hq[1])
+        else:
+            if self._draft is None or self._draft[0] != key:
+                img, _ = self._scene.render(self.yaw, self.pitch, self.zoom, self.open_t, w, h, pose, 0.5)
+                self._draft = (key, to_qimage(img))
+            p.drawImage(self.rect(), self._draft[1])
+            if not self.animate:
+                self._settle.start()
         if self.bones:
-            draw_bones(p, self._scene, self.yaw, self.pitch, self.zoom, self.open_t, self.width(), self.height(), pose)
+            draw_bones(p, self._scene, self.yaw, self.pitch, self.zoom, self.open_t, w, h, pose)
         p.setPen(QColor(COLORS["muted"]))
         p.drawText(12, self.height() - 12, "Arrastra para rotar · rueda para zoom · doble clic para restablecer")
 
@@ -150,15 +179,15 @@ class MeshViewer(QWidget):
         self._last = e.position()
         self.yaw += delta.x() * 0.01
         self.pitch = max(-1.5, min(1.5, self.pitch + delta.y() * 0.01))
-        self.update()
+        self._changed()
 
     def mouseReleaseEvent(self, _):
         self._last = None
 
     def mouseDoubleClickEvent(self, _):
         self._reset_view()
-        self.update()
+        self._changed()
 
     def wheelEvent(self, e):
         self.zoom = max(0.3, min(6.0, self.zoom * 1.1 ** (e.angleDelta().y() / 120)))
-        self.update()
+        self._changed()
