@@ -128,7 +128,7 @@ class Asistente:
         Asistente._named = set()
         known = self._reference(words)
         if known:                                       # las palabras del nombre registrado no se confunden con colores («roca» ≠ «rosa»)
-            words = [w if (w not in Asistente._named or w in self.model.vocab.stoi) else UNK for w in words]
+            words = [w if (w not in Asistente._named or (w in self.model.vocab.stoi and not bases_in([w]))) else UNK for w in words]   # un color que forma parte del nombre («bolsa marron») tampoco cuenta como color
         if known:
             ctx.append("ref")                           # el texto nombra un objeto registrado en el catálogo (tabla referencias)
         prog = self.model.generate(ctx, words)
