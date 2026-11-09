@@ -19,6 +19,7 @@ class Part:
     joints: Optional[np.ndarray] = None    # (n,4) uint8: huesos que mueven cada vértice (si el modelo tiene esqueleto)
     weights: Optional[np.ndarray] = None   # (n,4) float32: peso de cada hueso (suman 1)
     raised: Optional[np.ndarray] = None    # (m,) float: +1 caras de relieve, -1 caras de fondo (el visor las dibuja después / antes que las demás al ordenar por profundidad)
+    independent: bool = False          # pieza suelta: sin padre ni bisagra, el juego la mueve por su cuenta alrededor de 'origin'
 
 
 @dataclass
@@ -55,5 +56,5 @@ class Model:
             n = p.normals.astype(np.float64) / s
             n /= np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-12)
             parts.append(Part(p.name, (p.vertices * s).astype(np.float32), p.faces, n.astype(np.float32), p.uvs,
-                              p.parent, tuple((np.array(p.origin) * s).tolist()), p.axis, p.open_angle, p.joints, p.weights, p.raised))
+                              p.parent, tuple((np.array(p.origin) * s).tolist()), p.axis, p.open_angle, p.joints, p.weights, p.raised, p.independent))
         return Model(parts, self.texture, None if self.skeleton is None else self.skeleton.scaled(float(sxz)))

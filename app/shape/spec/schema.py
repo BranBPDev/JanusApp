@@ -245,13 +245,16 @@ class ObjectSpec:
         if m.get("partes") is not None:
             try:
                 parts = np.array(m["partes"], np.int64)
-                h = m["bisagra"]
-                hinge = {"origin": tuple(float(c) for c in h["origen"]), "axis": tuple(float(c) for c in h["eje"]), "angle": float(h["grados"])}
-                ok = len(hinge["origin"]) == 3 and len(hinge["axis"]) == 3 and any(hinge["axis"])
+                h = m.get("bisagra")
+                if h is None:                        # sin bisagra: dos piezas completamente separadas (cada una un objeto suelto)
+                    ok = True
+                else:
+                    hinge = {"origin": tuple(float(c) for c in h["origen"]), "axis": tuple(float(c) for c in h["eje"]), "angle": float(h["grados"])}
+                    ok = len(hinge["origin"]) == 3 and len(hinge["axis"]) == 3 and any(hinge["axis"])
             except Exception:
                 ok = False
             if not ok or parts.shape != (len(F),) or not np.isin(parts, (0, 1)).all():
-                raise SpecError("«malla»: «partes» debe tener un 0 (fija) o 1 (móvil) por cara y «bisagra» un «origen» [x, y, z], un «eje» [x, y, z] y «grados».")
+                raise SpecError("«malla»: «partes» debe tener un 0 (fija) o 1 (móvil) por cara y «bisagra» (opcional: sin ella las dos piezas quedan sueltas) un «origen» [x, y, z], un «eje» [x, y, z] y «grados».")
         return {"vertices": V, "faces": F.astype(np.int32), "zones": zones, "colors": colors, "alphas": alphas, "raised": raised, "back": back,
                 "parts": parts, "hinge": hinge}
 

@@ -109,6 +109,7 @@ def write_glb(path, model, name="objeto", animation=True):
             host = nodes[0] if parent < 0 else nodes[joint_node[parent]]
             host.setdefault("children", []).append(joint_node[i])
     skinned = sk is not None
+    loose = len(model.parts) > 1 and all(p.independent for p in model.parts)
     for p in model.parts:
         rigged = skinned and p.joints is not None
         local = (p.vertices if rigged else p.vertices - np.array(p.origin, np.float32)).astype("<f4")
@@ -158,12 +159,16 @@ def write_glb(path, model, name="objeto", animation=True):
         node_of[p.name] = len(nodes) - 1
     for p in model.parts:
         rigged = skinned and p.joints is not None
+        if loose:
+            continue                                            # piezas sueltas: nodos raíz de la escena, sin padre común
         parent = nodes[node_of[p.parent]] if p.parent and not rigged else nodes[0]
         parent.setdefault("children", []).append(node_of[p.name])
 
+    if not nodes[0].get("children"):
+        nodes[0].pop("children", None)                  # glTF no admite una lista de hijos vacía
     meta = {
         "asset": {"version": "2.0", "generator": "JanusApp"},
-        "scene": 0, "scenes": [{"nodes": [0]}], "nodes": nodes, "meshes": meshes,
+        "scene": 0, "scenes": [{"nodes": [node_of[p.name] for p in model.parts] if loose else [0]}], "nodes": nodes, "meshes": meshes,
         "accessors": accessors,
     }
     if skinned:
