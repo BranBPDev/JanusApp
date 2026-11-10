@@ -54,7 +54,8 @@ def render_thumbnail(model, max_side: int = 64, yaw: float = 0.5, pitch: float =
 
 class MeshViewer(QWidget):
     """Visor por software con z-buffer: texturas, apertura de piezas, rotación con ratón y zoom con rueda.
-    Mientras se mueve se dibuja un borrador a media resolución; al parar se calcula en segundo plano la imagen con suavizado."""
+    La imagen se calcula siempre en un hilo aparte (la interfaz no se bloquea y solo se calcula la última vista pedida): primero
+    a resolución completa y, al parar, con suavizado de bordes. Mientras llega la nueva se sigue viendo la anterior, nunca una ampliada."""
 
     _done = Signal(object, object)
 
@@ -72,13 +73,15 @@ class MeshViewer(QWidget):
         self._settle = QTimer(self)
         self._settle.setSingleShot(True)
         self._settle.setInterval(160)
-        self._settle.timeout.connect(self._start_hq)
-        self._done.connect(self._hq_ready)
+        self._settle.timeout.connect(self._refine)
+        self._done.connect(self._ready)
         self._scene = None
         self._last = None
-        self._draft = None         # (clave, imagen) del borrador
-        self._hq = None            # (clave, imagen) de la imagen final
-        self._job = 0
+        self._shown = None         # (clave, supermuestreo, imagen) de lo último calculado
+        self._lock = threading.Lock()
+        self._pending = None       # petición de dibujo que espera al hilo
+        self._busy = False
+        self._asked = None         # (clave, supermuestreo) de la última petición
         self._reset_view()
 
     def _reset_view(self):
@@ -88,12 +91,11 @@ class MeshViewer(QWidget):
         return (self.yaw, self.pitch, self.zoom, self.open_t, self.width(), self.height(), round(self._phase, 4) if self.animate else None, id(self._scene))
 
     def _changed(self):
-        self._job += 1
         self.update()
 
     def set_model(self, model):
         self._scene = Scene(model) if model is not None else None
-        self._draft = self._hq = None
+        self._shown = self._asked = None
         self._changed()
 
     def set_open(self, t: float):
@@ -123,23 +125,40 @@ class MeshViewer(QWidget):
         self.wireframe = on
         self._changed()
 
-    def _start_hq(self):
-        """Calcula en otro hilo la imagen final (supermuestreo 2x) de la vista actual."""
-        if self._scene is None or self.animate:
+    def _submit(self, ss):
+        """Pide dibujar la vista actual con supermuestreo ss; si el hilo está ocupado, la petición anterior se descarta."""
+        args = (self._key(), self._scene, self.yaw, self.pitch, self.zoom, self.open_t, self.width(), self.height(), self._pose(), ss)
+        if self._asked == (args[0], ss):
             return
-        key, job = self._key(), self._job
-        args = (self._scene, self.yaw, self.pitch, self.zoom, self.open_t, self.width(), self.height())
+        self._asked = (args[0], ss)
+        with self._lock:
+            self._pending = args
+            if self._busy:
+                return
+            self._busy = True
+        threading.Thread(target=self._work, daemon=True).start()
 
-        def work():
-            img, _ = args[0].render(*args[1:], None, 2)
-            self._done.emit((key, job), to_qimage(img))
-        threading.Thread(target=work, daemon=True).start()
+    def _work(self):
+        while True:
+            with self._lock:
+                args, self._pending = self._pending, None
+                if args is None:
+                    self._busy = False
+                    return
+            key, scene, *view, pose, ss = args
+            img, _ = scene.render(*view, pose, ss)
+            self._done.emit((key, ss), to_qimage(img))
 
-    def _hq_ready(self, tag, image):
-        key, job = tag
-        if job == self._job and key == self._key():
-            self._hq = (key, image)
+    def _ready(self, tag, image):
+        key, ss = tag
+        if self._scene is not None and key[-1] == id(self._scene):
+            self._shown = (key, ss, image)
             self.update()
+
+    def _refine(self):
+        """Al parar: la misma vista con suavizado de bordes."""
+        if self._scene is not None and not self.animate and self._shown is not None and self._shown[0] == self._key():
+            self._submit(2)
 
     def paintEvent(self, _):
         p = QPainter(self)
@@ -155,15 +174,13 @@ class MeshViewer(QWidget):
             img, visible = self._scene.render(self.yaw, self.pitch, self.zoom, self.open_t, w, h, pose, 1)
             p.drawImage(0, 0, to_qimage(img))
             draw_wire(p, self._scene, visible, self.yaw, self.pitch, self.zoom, self.open_t, w, h, pose)
-        elif self._hq is not None and self._hq[0] == key:
-            p.drawImage(self.rect(), self._hq[1])
         else:
-            if self._draft is None or self._draft[0] != key:
-                img, _ = self._scene.render(self.yaw, self.pitch, self.zoom, self.open_t, w, h, pose, 0.5)
-                self._draft = (key, to_qimage(img))
-            p.drawImage(self.rect(), self._draft[1])
-            if not self.animate:
-                self._settle.start()
+            if self._shown is None or self._shown[0] != key:
+                self._submit(1)
+            if self._shown is not None:
+                p.drawImage(0, 0, self._shown[2])
+                if self._shown[0] == key and self._shown[1] < 2 and not self.animate:
+                    self._settle.start()
         if self.bones:
             draw_bones(p, self._scene, self.yaw, self.pitch, self.zoom, self.open_t, w, h, pose)
         p.setPen(QColor(COLORS["muted"]))
