@@ -219,8 +219,9 @@ class ObjectSpec:
     def _check_mesh(m, textures):
         """«malla» (opcional): el modelo 3d tal cual, en metros con Y arriba, la base en y = 0 y el frente hacia +Z.
         {"vertices": [[x, y, z]…], "caras": [[i, j, k]…], "zonas": [zona de cada cara], "colores": [«#rrggbb» o nombre de una textura de color, de cada zona],
-        "partes": [0 = fija, 1 = móvil, de cada cara], "bisagra": {"origen": [x, y, z], "eje": [x, y, z], "grados": -105}}   (las dos últimas, opcionales: la pieza móvil
-        gira sobre el eje que pasa por «origen» hasta «grados»; así se abre, por ejemplo, la tapa de un cofre)."""
+        "partes": [pieza de cada cara: 0, 1, 2…], "bisagra": {"origen": [x, y, z], "eje": [x, y, z], "grados": -105}, "nombres_partes": [nombre de cada pieza]}
+        (las tres últimas, opcionales). Con «bisagra» hay dos piezas (0 = fija, 1 = móvil) y la móvil gira sobre el eje que pasa por «origen» hasta «grados»
+        (así se abre la tapa de un cofre). Sin «bisagra» cada pieza es un objeto suelto e independiente (un coco partido, un racimo de plátanos…)."""
         if m is None:
             return None
         try:
@@ -242,22 +243,30 @@ class ObjectSpec:
             raise SpecError("«malla»: «zonas» debe tener un número por cara y «colores» un color por zona.")
         raised = [int(z) for z in (m.get("relieve") or [])]
         back = [int(z) for z in (m.get("fondo") or [])]
-        parts, hinge = None, None
+        parts, hinge, part_names = None, None, None
         if m.get("partes") is not None:
             try:
                 parts = np.array(m["partes"], np.int64)
                 h = m.get("bisagra")
-                if h is None:                        # sin bisagra: dos piezas completamente separadas (cada una un objeto suelto)
+                if h is None:                        # sin bisagra: piezas completamente separadas (cada una un objeto suelto)
                     ok = True
                 else:
                     hinge = {"origin": tuple(float(c) for c in h["origen"]), "axis": tuple(float(c) for c in h["eje"]), "angle": float(h["grados"])}
                     ok = len(hinge["origin"]) == 3 and len(hinge["axis"]) == 3 and any(hinge["axis"])
+                ok = ok and parts.shape == (len(F),) and parts.min() >= 0 and len(np.unique(parts)) == parts.max() + 1 \
+                    and (hinge is None or parts.max() <= 1)
             except Exception:
                 ok = False
-            if not ok or parts.shape != (len(F),) or not np.isin(parts, (0, 1)).all():
-                raise SpecError("«malla»: «partes» debe tener un 0 (fija) o 1 (móvil) por cara y «bisagra» (opcional: sin ella las dos piezas quedan sueltas) un «origen» [x, y, z], un «eje» [x, y, z] y «grados».")
+            if not ok:
+                raise SpecError("«malla»: «partes» debe dar el número de pieza (0, 1, 2…, sin saltos) de cada cara; con «bisagra» solo hay 0 (fija) y 1 (móvil), y "
+                                "«bisagra» necesita un «origen» [x, y, z], un «eje» [x, y, z] y «grados». Sin «bisagra» las piezas quedan sueltas.")
+            if hinge is None and parts.max() >= 1 and m.get("nombres_partes") is not None:
+                part_names = m["nombres_partes"]
+                if not (isinstance(part_names, list) and len(part_names) == parts.max() + 1 and all(isinstance(n, str) and n.strip() for n in part_names)
+                        and len(set(part_names)) == len(part_names)):
+                    raise SpecError("«malla»: «nombres_partes» debe tener un nombre distinto por pieza.")
         return {"vertices": V, "faces": F.astype(np.int32), "zones": zones, "colors": colors, "alphas": alphas, "raised": raised, "back": back,
-                "parts": parts, "hinge": hinge}
+                "parts": parts, "hinge": hinge, "part_names": part_names}
 
     def _check_reliefs(self):
         if not isinstance(self.reliefs, list):

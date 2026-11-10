@@ -10,6 +10,13 @@ def part_name(name: str, loose: bool) -> str:
     return LOOSE_NAMES.get(name, name) if loose else name
 
 
+def loose_names(count: int, names=None) -> list:
+    """Nombre de cada pieza suelta: los dados, 'mitad_a'/'mitad_b' si son dos o 'pieza_1', 'pieza_2'… si son más."""
+    if names:
+        return list(names)
+    return list(LOOSE_NAMES.values()) if count == 2 else [f"pieza_{i + 1}" for i in range(count)]
+
+
 def node_props(vertices, loose: bool, hinge=None) -> dict:
     """Argumentos de nodo de una pieza al crear su Part.
     loose: objeto suelto, sin padre ni bisagra: gira sobre el centro de su caja.

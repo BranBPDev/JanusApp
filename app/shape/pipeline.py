@@ -9,7 +9,7 @@ from app.shape.geometry.ellipsoid import bake_equirect, descriptor, is_ellipsoid
 from app.shape.geometry.field import compose, detect_orientation, grid_shape, make_arrays
 from app.shape.geometry import mesh_object
 from app.shape.geometry.mesh_ops import build_attributes, crease_normals, is_watertight, remove_small_components, taubin_smooth, used_map
-from app.shape.geometry.pieces import node_props, part_name
+from app.shape.geometry.pieces import loose_names, node_props, part_name
 from app.shape.texture.sample import face_texels
 from app.shape.geometry.opening import find_opening
 from app.shape.geometry.primitive import fit_primitive, is_round, primitive_mesh
@@ -238,12 +238,15 @@ def _mesh_object(bp, warnings, progress, t0):
     V, F, zones = m["vertices"], m["faces"], m["zones"]
     tex, zone_uv = mesh_object.zone_texture(m["colors"], m.get("alphas"))
     invoke_progress(progress, 0.2, "Preparando la malla...")
-    loose = m.get("parts") is not None and m.get("hinge") is None
+    count = 0 if m.get("parts") is None else int(m["parts"].max()) + 1
+    loose = count > 1 and m.get("hinge") is None
     hinge = m.get("hinge") and (m["hinge"]["origin"], m["hinge"]["axis"], m["hinge"]["angle"])
-    if m.get("parts") is None:
-        pieces = [("body", np.ones(len(F), bool))]
-    else:                                      # dos piezas (fija + móvil con bisagra, o sueltas): cada una se simplifica por separado
+    if loose:                                  # piezas sueltas: cada una un objeto, simplificada por separado
+        pieces = [(name, m["parts"] == i) for i, name in enumerate(loose_names(count, m.get("part_names")))]
+    elif count > 1:                            # fija + móvil con bisagra
         pieces = [("fixed", m["parts"] == 0), ("movable", m["parts"] == 1)]
+    else:
+        pieces = [("body", np.ones(len(F), bool))]
     split = []
     for name, sel in pieces:
         if sel.all():
@@ -252,7 +255,7 @@ def _mesh_object(bp, warnings, progress, t0):
             used, remap = used_map(F[sel], len(V))
             Vp, Fp, zp = V[used], remap[F[sel]].astype(np.int32), zones[sel]
         extra = node_props(Vp, loose, hinge if name == "movable" else None)
-        split.append((part_name(name, loose), mesh_object.levels(Vp, Fp, zp, LOD_TOLERANCE), extra))
+        split.append((name, mesh_object.levels(Vp, Fp, zp, LOD_TOLERANCE), extra))
     lods = []
     for li in range(len(LOD_TOLERANCE)):
         invoke_progress(progress, 0.3 + 0.55 * li / len(LOD_TOLERANCE), f"Construyendo LOD{li}...")
