@@ -2,10 +2,12 @@ import numpy as np
 
 from app.shape.geometry.cut import WALL, split_openable
 from app.shape.geometry.mesh_ops import build_attributes, crease_normals
+from app.shape.geometry.pieces import node_props, part_name
 from app.shape.geometry.primitive import primitive_mesh
 from app.shape.geometry.protrusion import assign_sides
 from app.shape.model import Model, Part
 from app.shape.texture.atlas import CHARTS, extend_colors, interior_color
+from app.shape.texture.sample import texels
 
 TEX_WIDTH = 512
 STRIP = 8          # filas extra con los colores planos del interior (si no hay texturas interiores)
@@ -55,9 +57,8 @@ def bake_equirect(images, masks, ext, flips=None, width: int = TEX_WIDTH, frames
             continue
         img = extend_colors(images[key], masks[key])
         u, v = uv(key)
-        ih, iw = img.shape[:2]
         inside = (u >= 0) & (u <= 1) & (v >= 0) & (v <= 1)
-        px = img[np.clip((v * ih).astype(int), 0, ih - 1), np.clip((u * iw).astype(int), 0, iw - 1), :3].astype(np.float64)
+        px = texels(img, u, v)[..., :3].astype(np.float64)
         wgt = np.clip(n @ np.array(direction, np.float64), 0, 1) ** 4 * inside
         acc += px * wgt[..., None]
         total += wgt
@@ -98,11 +99,11 @@ def preview_model(ext, texture, opening, interior=None, center=None, extras=None
     """Modelo de la esfera/elipsoide (vista previa y exportación). Devuelve (modelo, datos de apertura o None).
     'center' = centro del cuerpo si no está en el centro de la caja (objeto con salientes); 'extras' = malla de los
     salientes ({'V','F','uv','texture'}) que viaja con la pieza a la que pertenece."""
-    h, w = texture.shape[:2]
     V, F = primitive_mesh((1, 1.0, 1.0), np.asarray(ext), *MESH_GRID)
     if center is not None:
         V = V + (np.asarray(center, np.float64) - np.array([0.0, ext[1] / 2, 0.0]))
     split = split_openable(V, F, opening) if opening else None
+    loose = split is not None and bool(opening.get("loose"))
     if split is None:
         specs = [("body", V, F, np.zeros(len(F), int))]
     else:
@@ -121,7 +122,7 @@ def preview_model(ext, texture, opening, interior=None, center=None, extras=None
     for name, v, f, kind in specs:
         uvs = _equirect_uvs(v, f, ext, center)
         c = uvs[kind == 0].mean(axis=1)
-        colors[name] = texture[np.clip((c[:, 1] * h).astype(int), 0, h - 1), (c[:, 0] % 1 * w).astype(int) % w, :3].mean(axis=0)
+        colors[name] = texels(texture, c[:, 0] % 1, c[:, 1])[:, :3].mean(axis=0)
         uvs = uvs * np.array(core_scale)
         if extras is not None and side[name].any():          # los salientes se unen a la pieza (sin compartir vértices)
             sel = side[name]
@@ -154,13 +155,11 @@ def preview_model(ext, texture, opening, interior=None, center=None, extras=None
         if textured and name in ("movable", "fixed"):
             uvs = interior.remap(uvs, kind, v, f, name, opening["normal"], opening["point"], (ext[0], ext[2]))
         verts, faces, nrm, uv = build_attributes(v, f, crease_normals(v, f, 60.0), uvs)
-        extra = {}
-        if name == "movable":
-            extra = {"origin": split[2], "axis": split[3], "open_angle": split[4]}
-        parts.append(Part(name, verts.astype(np.float32), faces, nrm.astype(np.float32), uv.astype(np.float32), **extra))
+        extra = node_props(v, loose, split[2:] if name == "movable" else None)
+        parts.append(Part(part_name(name, loose), verts.astype(np.float32), faces, nrm.astype(np.float32), uv.astype(np.float32), **extra))
     info = None
     if split is not None:
-        info = {"hinge": split[2], "axis": split[3], "angle": split[4], "colors": colors,
+        info = {"hinge": split[2], "axis": split[3], "angle": split[4], "loose": loose, "colors": colors,
                 "interior_textures": interior.used() if textured else {"movable": False, "fixed": False},
                 "uv_scale": [float(scale[0]), float(scale[1])]}
     return Model(parts, tex), info
@@ -188,9 +187,10 @@ def descriptor(ext_m, opening_info=None, opening=None, scale=1.0, triangles=0, c
             "plane_point": r(opening["point"]),
             "plane_normal": [round(float(x), 5) for x in opening["normal"]],
             "moving_side": "la del lado al que apunta plane_normal",
-            "hinge": r(opening_info["hinge"]),
-            "axis": list(opening_info["axis"]),
-            "open_angle_deg": opening_info["angle"],
+            **({"separated": True, "parts": ["mitad_a", "mitad_b"],
+                "note": "las dos mitades son objetos independientes (sin bisagra); mitad_b es la del lado de plane_normal"}
+               if opening_info.get("loose") else
+               {"hinge": r(opening_info["hinge"]), "axis": list(opening_info["axis"]), "open_angle_deg": opening_info["angle"]}),
             "wall": WALL,
             "interior_textures": opening_info.get("interior_textures"),
             "interior_texture_projection": "plana sobre el corte: u = x / ancho + 0.5, v = z / fondo + 0.5 (frente abajo); cada pieza tiene su celda cuadrada bajo la textura exterior",

@@ -1,6 +1,6 @@
 import heapq
 import numpy as np
-from app.shape.geometry.mesh_ops import unique_edges
+from app.shape.geometry.mesh_ops import unique_edges, used_map
 
 
 def _vertex_quadrics(V, F):
@@ -159,8 +159,6 @@ def decimate(V: np.ndarray, F: np.ndarray, max_error: float, min_faces: int = 24
     keep = [i for i, ok in enumerate(alive) if ok]
     faces = np.asarray([Fl[i] for i in keep], np.int32)
     verts = np.asarray(P, np.float64)
-    used = np.unique(faces)
-    remap = np.full(len(verts), -1, np.int64)
-    remap[used] = np.arange(len(used))
+    used, remap = used_map(faces, len(verts))
     out = (verts[used], remap[faces].astype(np.int32))
     return (*out, remap) if return_map else out

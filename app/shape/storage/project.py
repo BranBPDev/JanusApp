@@ -54,7 +54,7 @@ def save_shape(name: str, result: ShapeResult, source_text: str = None) -> Path:
     if lod0.texture is not None:
         (shape_dir / "texture.png").write_bytes(texture_png(lod0.texture))
     parts = [{"name": p.name, "parent": p.parent, "origin": list(p.origin), "axis": list(p.axis) if p.axis else None,
-              "open_angle_deg": p.open_angle} for p in lod0.parts]
+              "open_angle_deg": p.open_angle, "independent": p.independent} for p in lod0.parts]
 
     manifest = _read_manifest(root)
     for stale in ("views", "grids", "interiors"):      # entradas de proyectos antiguos (hechos con imágenes)
@@ -120,6 +120,7 @@ def load_model(root: Path):
                 part.parent, part.origin = extra.get("parent"), tuple(extra.get("origin", (0.0, 0.0, 0.0)))
                 part.axis = tuple(extra["axis"]) if extra.get("axis") else None
                 part.open_angle = extra.get("open_angle_deg", 0.0)
+                part.independent = bool(extra.get("independent", False))
         skeleton = _read_manifest(root).get("shape", {}).get("skeleton")
         if skeleton:
             attach_skeleton(model, Skeleton.from_dict(skeleton))

@@ -2,6 +2,8 @@ from collections import defaultdict
 
 import numpy as np
 
+from app.shape.geometry.mesh_ops import used_map
+
 WALL = 0.93           # profundidad relativa del interior
 OPEN_ANGLE = 75.0     # grados de apertura (el signo se decide solo, hacia el lado que se aleja)
 AXIS = np.array([1.0, 0.0, 0.0])
@@ -83,9 +85,7 @@ def _single_loop(segs):
 def _hollow(V, F, ring, c3, into):
     """Pieza abierta: exterior + una cúpula interior de pocos triángulos que arranca en el borde. (V, F, kind).
     'into' = dirección (unitaria) desde el plano hacia el interior de la pieza."""
-    used = np.unique(F)
-    remap = np.full(len(V), -1)
-    remap[used] = np.arange(len(used))
+    used, remap = used_map(F, len(V))
     Vp, Fp = V[used], remap[F]
     ring_pts = Vp[remap[ring]]
     r = len(ring)

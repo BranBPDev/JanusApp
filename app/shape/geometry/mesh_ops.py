@@ -14,10 +14,17 @@ def unique_edges(F: np.ndarray) -> np.ndarray:
     return e[idx]
 
 
-def compact(V: np.ndarray, F: np.ndarray):
+def used_map(F: np.ndarray, n: int):
+    """(índices de los vértices usados por F, tabla vértice antiguo -> nuevo (-1 si no se usa)) de una malla de n vértices."""
     used = np.unique(F)
-    remap = np.full(len(V), -1, np.int64)
+    remap = np.full(n, -1, np.int64)
     remap[used] = np.arange(len(used))
+    return used, remap
+
+
+def compact(V: np.ndarray, F: np.ndarray):
+    """Malla sin los vértices que no usa ninguna cara."""
+    used, remap = used_map(F, len(V))
     return V[used], remap[F].astype(np.int32)
 
 

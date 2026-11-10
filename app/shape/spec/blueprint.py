@@ -108,6 +108,7 @@ def read_marks(spec: ObjectSpec) -> Marks:
     for kind, store in (("mueve", out.move), ("bisagra", out.hinge)):
         for item in m.get(kind, []):
             store.setdefault(VIEW_KEYS[item["vista"]], []).append(parse_point(item["punto"], kind))
+    out.split = bool(m.get("separar"))
     for item in m.get("boton", []):
         out.button.setdefault(VIEW_KEYS[item["vista"]], []).append((parse_point(item["centro"], "boton"), float(item.get("radio", 0.01))))
     for b in m.get("huesos", []):

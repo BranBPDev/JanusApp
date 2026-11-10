@@ -47,6 +47,7 @@ Estructura (todas las medidas en METROS):
     "corte":     [{"vista": "derecha", "linea": [[0, 0.1], [0.2, 0.1]]}],         # por aquí se abre
     "mueve":     [{"vista": "derecha", "punto": [0.1, 0.15]}],                     # (opcional) lado que se mueve
     "bisagra":   [{"vista": "derecha", "punto": [0.004, 0.1]}],                    # (opcional) pivote
+    "separar":   true,                                                              # (opcional) las dos piezas quedan sueltas, sin bisagra
     "boton":     [{"vista": "frente", "centro": [0.1, 0.1], "radio": 0.03}],       # queda entero en la tapa
     "salientes": [{"vista": "frente", "forma": "circulo", "centro": [0.1, 0.1], "radio": 0.1}],   # huella de lo que sobresale
     "huesos":    [{"id": 0, "padre": null, "frente": [0.1, 0.1], "derecha": [0.1, 0.1]},
@@ -324,6 +325,8 @@ class ObjectSpec:
             raise SpecError(f"{where}: «radio_aro_m» debe ser menor que el radio de la esfera ({r['radio_m']} m).")
 
     def _check_marks(self):
+        if not isinstance(self.marks.get("separar", False), bool):
+            raise SpecError("marcas.separar: debe ser true o false.")
         for kind in MARK_KINDS:
             for item in self.marks.get(kind, []):
                 if item.get("vista") not in VIEW_KEYS:

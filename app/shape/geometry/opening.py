@@ -7,8 +7,8 @@ from app.shape.spec.marks import Marks
 
 
 def find_opening(marks: Marks, dims_m, height_m):
-    """A partir de las marcas devuelve {'point', 'normal', 'hinge', 'button'} en unidades del modelo (alto = 1) o None, y una
-    lista de avisos. 'normal' apunta hacia la parte que se mueve."""
+    """A partir de las marcas devuelve {'point', 'normal', 'hinge', 'button', 'loose'} en unidades del modelo (alto = 1) o None, y una
+    lista de avisos. 'normal' apunta hacia la parte que se mueve; 'loose' = las dos piezas se separan del todo (sin bisagra)."""
     warnings, plane = [], None
     dims = tuple(dims_m)
     world = lambda key, p: view_to_world(key, *p, dims)
@@ -54,4 +54,4 @@ def find_opening(marks: Marks, dims_m, height_m):
         button = {"center": [(cx - dims[0] / 2) / height_m, cy / height_m], "radius": r / height_m}
 
     return {"point": point / height_m, "normal": normal, "hinge": None if hinge is None else hinge / height_m,
-            "button": button}, warnings
+            "button": button, "loose": marks.split}, warnings

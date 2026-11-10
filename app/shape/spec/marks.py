@@ -9,12 +9,15 @@ class Marks:
     move: dict = field(default_factory=dict)        # [punto]: lado que se mueve
     hinge: dict = field(default_factory=dict)       # [punto]: bisagra
     button: dict = field(default_factory=dict)      # [(centro, radio)]
+    split: bool = False                             # separar: las dos piezas quedan sueltas, sin bisagra
     footprints: dict = field(default_factory=dict)  # máscara booleana (alto, ancho) de lo que sobresale, del tamaño de la vista
     joints: dict = field(default_factory=dict)      # [{'id', 'parent', 'x_m', 'y_m'}]
 
     def to_dict(self) -> dict:
         """Resumen serializable (para el manifest del proyecto)."""
         out = {k: _plain(getattr(self, k)) for k in ("cut", "move", "hinge", "button", "joints") if getattr(self, k)}
+        if self.split:
+            out["split"] = True
         if self.footprints:
             out["footprints"] = sorted(self.footprints)
         return out

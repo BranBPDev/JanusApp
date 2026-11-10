@@ -6,7 +6,9 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from app.shape.geometry.mesh_ops import used_map
 from app.shape.model import Model, Part
+from app.shape.texture.sample import face_texels
 from app.shape.rig.skeleton import swing_pose
 
 
@@ -59,10 +61,8 @@ def read_obj(path, texture=None) -> Model:
     parts = []
     for name, faces in groups.items():
         F = np.array(faces, np.int32)
-        used = np.unique(F)
-        remap = np.zeros(len(V), np.int32)
-        remap[used] = np.arange(len(used))
-        parts.append(Part(name, V[used], remap[F], VN[used], VT[used] if len(VT) == len(V) else None))
+        used, remap = used_map(F, len(V))
+        parts.append(Part(name, V[used], remap[F].astype(np.int32), VN[used], VT[used] if len(VT) == len(V) else None))
     return Model(parts, texture)
 
 
@@ -131,10 +131,7 @@ def write_glb(path, model, name="objeto", animation=True):
         if model.texture is not None and p.uvs is not None and int(model.texture[..., 3].min()) < 255:
             # zonas translúcidas (cristal): las caras opacas y las translúcidas van en primitivas con material distinto (opaco / «BLEND»),
             # así el motor dibuja primero lo opaco (el símbolo de dentro) y mezcla el cristal encima desde cualquier ángulo
-            th, tw = model.texture.shape[:2]
-            uv = p.uvs[p.faces].mean(axis=1)
-            fa = model.texture[np.clip((uv[:, 1] * th).astype(int), 0, th - 1), np.clip((uv[:, 0] * tw).astype(int), 0, tw - 1), 3]
-            glass = fa < 255
+            glass = face_texels(model.texture, p.uvs, p.faces)[:, 3] < 255
         if glass is not None and glass.any() and not glass.all():
             prims = [{"attributes": attrs, "indices": index_acc(p.faces[~glass]), "mode": 4, "material": 0},
                      {"attributes": attrs, "indices": index_acc(p.faces[glass]), "mode": 4, "material": 1}]

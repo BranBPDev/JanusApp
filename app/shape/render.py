@@ -2,6 +2,7 @@ import math
 
 import numpy as np
 
+from app.shape.texture.sample import face_texels
 from app.shape.zbuffer import shade, visibility, fragments
 from app.shape.rig.skeleton import pose_frames, rotation_matrix, skin_vertices, swing_rotations
 
@@ -62,11 +63,7 @@ class Scene:
             if tex is None or p.uvs is None:
                 colors.append(np.tile(_DEFAULT, (len(p.faces), 1)))
                 continue
-            uv = p.uvs[p.faces].mean(axis=1)
-            h, w = tex.shape[:2]
-            x = np.clip((uv[:, 0] * w).astype(int), 0, w - 1)
-            y = np.clip((uv[:, 1] * h).astype(int), 0, h - 1)
-            colors.append(tex[y, x, :3].astype(np.float64))
+            colors.append(face_texels(tex, p.uvs, p.faces)[:, :3].astype(np.float64))
         return np.concatenate(colors)
 
     def _face_alphas(self):
@@ -77,11 +74,7 @@ class Scene:
             if tex is None or p.uvs is None:
                 out.append(np.ones(len(p.faces)))
                 continue
-            uv = p.uvs[p.faces].mean(axis=1)
-            h, w = tex.shape[:2]
-            x = np.clip((uv[:, 0] * w).astype(int), 0, w - 1)
-            y = np.clip((uv[:, 1] * h).astype(int), 0, h - 1)
-            out.append(tex[y, x, 3] / 255.0)
+            out.append(face_texels(tex, p.uvs, p.faces)[:, 3] / 255.0)
         return np.concatenate(out)
 
     def pose(self, phase: float):

@@ -8,7 +8,9 @@ from app.shape.geometry.cut import split_openable
 from app.shape.geometry.ellipsoid import bake_equirect, descriptor, is_ellipsoid, preview_model
 from app.shape.geometry.field import compose, detect_orientation, grid_shape, make_arrays
 from app.shape.geometry import mesh_object
-from app.shape.geometry.mesh_ops import build_attributes, crease_normals, is_watertight, remove_small_components, taubin_smooth
+from app.shape.geometry.mesh_ops import build_attributes, crease_normals, is_watertight, remove_small_components, taubin_smooth, used_map
+from app.shape.geometry.pieces import node_props, part_name
+from app.shape.texture.sample import face_texels
 from app.shape.geometry.opening import find_opening
 from app.shape.geometry.primitive import fit_primitive, is_round, primitive_mesh
 from app.shape.geometry.protrusion import build_extras, fit_core
@@ -236,27 +238,20 @@ def _mesh_object(bp, warnings, progress, t0):
     tex, zone_uv = mesh_object.zone_texture(m["colors"], m.get("alphas"))
     invoke_progress(progress, 0.2, "Preparando la malla...")
     loose = m.get("parts") is not None and m.get("hinge") is None
-    if loose:                                  # dos piezas sueltas: cada una un objeto con su propio origen (el centro de su caja)
-        def centre(sel):
-            pts = V[np.unique(F[sel])]
-            return tuple(float(c) for c in (pts.min(axis=0) + pts.max(axis=0)) / 2)
-        pieces = [("mitad_a", m["parts"] == 0, {"origin": centre(m["parts"] == 0), "independent": True}),
-                  ("mitad_b", m["parts"] == 1, {"origin": centre(m["parts"] == 1), "independent": True})]
-    elif m.get("parts") is not None:           # fija + móvil: cada pieza se simplifica por separado
-        pieces = [("fixed", m["parts"] == 0, {}), ("movable", m["parts"] == 1, {"origin": m["hinge"]["origin"], "axis": m["hinge"]["axis"],
-                                                                                 "open_angle": m["hinge"]["angle"]})]
-    else:
-        pieces = [("body", np.ones(len(F), bool), {})]
+    hinge = m.get("hinge") and (m["hinge"]["origin"], m["hinge"]["axis"], m["hinge"]["angle"])
+    if m.get("parts") is None:
+        pieces = [("body", np.ones(len(F), bool))]
+    else:                                      # dos piezas (fija + móvil con bisagra, o sueltas): cada una se simplifica por separado
+        pieces = [("fixed", m["parts"] == 0), ("movable", m["parts"] == 1)]
     split = []
-    for name, sel, extra in pieces:
+    for name, sel in pieces:
         if sel.all():
-            split.append((name, mesh_object.levels(V, F, zones, LOD_TOLERANCE), extra))
-            continue
-        Fp = F[sel]
-        used = np.unique(Fp)
-        remap = np.full(len(V), -1)
-        remap[used] = np.arange(len(used))
-        split.append((name, mesh_object.levels(V[used], remap[Fp].astype(np.int32), zones[sel], LOD_TOLERANCE), extra))
+            Vp, Fp, zp = V, F, zones
+        else:
+            used, remap = used_map(F[sel], len(V))
+            Vp, Fp, zp = V[used], remap[F[sel]].astype(np.int32), zones[sel]
+        extra = node_props(Vp, loose, hinge if name == "movable" else None)
+        split.append((part_name(name, loose), mesh_object.levels(Vp, Fp, zp, LOD_TOLERANCE), extra))
     lods = []
     for li in range(len(LOD_TOLERANCE)):
         invoke_progress(progress, 0.3 + 0.55 * li / len(LOD_TOLERANCE), f"Construyendo LOD{li}...")
@@ -282,25 +277,23 @@ def _mesh_object(bp, warnings, progress, t0):
 def _build_parts(V, F, opening, atlas, crease):
     """Una pieza ('body') o, si hay marca de corte, pieza fija + pieza móvil huecas con bisagra."""
     split = split_openable(V, F, opening) if opening else None
+    loose = split is not None and bool(opening.get("loose"))
     if split is None:
-        specs = [("body", V, F, np.zeros(len(F), int), atlas.fixed_uv, {})]
+        specs = [("body", V, F, np.zeros(len(F), int), atlas.fixed_uv, None)]
     else:
-        fixed, moving, hinge, axis, angle = split
-        specs = [("fixed", *fixed, atlas.fixed_uv, {}),
-                 ("movable", *moving, atlas.moving_uv, {"origin": hinge, "axis": axis, "open_angle": angle})]
+        specs = [("fixed", *split[0], atlas.fixed_uv, None), ("movable", *split[1], atlas.moving_uv, split[2:])]
 
     parts, colors = [], {}
     tex = atlas.texture
-    for name, v, f, kind, interior_uv, extra in specs:
+    for name, v, f, kind, interior_uv, hinge in specs:
         uvs = atlas.corner_uvs(v, f, kind, interior_uv)
         if atlas.interior is not None and split is not None and name in ("movable", "fixed"):
             uvs = atlas.interior.remap(uvs, kind, v, f, name, opening["normal"], opening["point"],
                                        (atlas.ext[0], atlas.ext[2]))
-        c = uvs[kind == 0].mean(axis=1)
-        th, tw = tex.shape[:2]
-        colors[name] = tex[np.clip((c[:, 1] * th).astype(int), 0, th - 1), np.clip((c[:, 0] * tw).astype(int), 0, tw - 1), :3].mean(axis=0)
+        colors[name] = face_texels(tex, uvs[kind == 0], None)[:, :3].mean(axis=0)
         verts, faces, nrm, uv = build_attributes(v, f, crease_normals(v, f, crease), uvs)
-        parts.append(Part(name, verts.astype(np.float32), faces, nrm.astype(np.float32), uv.astype(np.float32), **extra))
+        parts.append(Part(part_name(name, loose), verts.astype(np.float32), faces, nrm.astype(np.float32), uv.astype(np.float32),
+                          **node_props(v, loose, hinge)))
     return parts, split is not None, colors
 
 
