@@ -204,7 +204,8 @@ def generate_shape(bp: Blueprint, progress=None) -> ShapeResult:
         "mode": "primitiva" if primitive else "volumen",
         "primitive": {"axis": primitive[0], "e1": primitive[1], "e2": primitive[2]} if primitive else None,
         "primitive_iou": round(float(iou), 4),
-        "openable": openable,
+        "openable": lods[0].openable,
+        "separable": lods[0].separable,
         "watertight": bool(is_watertight(levels[0][1])),
         "texture": [atlas.size[1], atlas.size[0]],
         "seconds": round(time.time() - t0, 2),
@@ -267,7 +268,7 @@ def _mesh_object(bp, warnings, progress, t0):
                     raised -= 6.0 * (len(m["back"]) - i) * (z == b)
             parts.append(Part(name, verts.astype(np.float32), faces, nrm.astype(np.float32), uv.astype(np.float32), raised=raised, **extra))
         lods.append(Model(parts, tex))
-    info = {"mode": "malla", "primitive": None, "primitive_iou": 1.0, "openable": m.get("parts") is not None and m.get("hinge") is not None, "watertight": bool(is_watertight(F)),
+    info = {"mode": "malla", "primitive": None, "primitive_iou": 1.0, "openable": lods[0].openable, "separable": lods[0].separable, "watertight": bool(is_watertight(F)),
             "texture": [tex.shape[0], tex.shape[1]], "seconds": round(time.time() - t0, 2), "triangles": [m_.triangles for m_ in lods],
             "size": [round(x, 4) for x in lods[0].size], "metric": {"height_m": bp.dims_m[1], "width_m": bp.dims_m[0], "depth_m": bp.dims_m[2]}}
     invoke_progress(progress, 0.92, "Modelo generado")
@@ -325,7 +326,7 @@ def _ellipsoid(masks, images, dims, flips, height_m, opening, iou, marks, metric
                       None if core is None else core["center"] * scale, extra_tris)
 
     info = {"mode": "primitiva", "primitive": {"type": desc["type"]}, "primitive_iou": round(float(iou), 4),
-            "openable": open_info is not None, "texture": list(model.texture.shape[:2]), "triangles": [model.triangles],
+            "openable": model.openable, "separable": model.separable, "texture": list(model.texture.shape[:2]), "triangles": [model.triangles],
             "size": [round(float(x), 4) for x in box * scale], "seconds": round(time.time() - t0, 2),
             "metric": metric}
     if extras is not None:

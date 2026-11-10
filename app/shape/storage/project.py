@@ -82,6 +82,7 @@ class ProjectInfo:
     updated: str = ""
     triangles: int = 0
     openable: bool = False
+    separable: bool = False
 
 
 def list_projects() -> list:
@@ -97,7 +98,7 @@ def list_projects() -> list:
             found.append(ProjectInfo(
                 name=manifest.get("name") or root.name, root=root, updated=manifest.get("updated", ""),
                 triangles=int(tri[0]) if isinstance(tri, list) else int(tri),
-                openable=bool(shape.get("openable"))))
+                openable=bool(shape.get("openable")), separable=bool(shape.get("separable"))))
     return sorted(found, key=lambda p: p.updated, reverse=True)
 
 

@@ -60,16 +60,8 @@ def zonas() -> dict:
     return {t: tex for t, (tex, _, _) in cargar()["zonas"].items()}
 
 
-def palabras_zona() -> dict:
-    return {t: ws for t, (_, ws, _) in cargar()["zonas"].items()}
-
-
 def formas() -> set:
     return set(cargar()["formas"])
-
-
-def palabras_forma() -> dict:
-    return {t: ws for t, (ws, _) in cargar()["formas"].items() if ws}
 
 
 def plantilla(token) -> list:

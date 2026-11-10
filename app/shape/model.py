@@ -45,6 +45,11 @@ class Model:
         return any(p.axis is not None for p in self.parts)
 
     @property
+    def separable(self) -> bool:
+        """Se parte en varios objetos independientes (sin bisagra ni padre)."""
+        return len(self.parts) > 1 and all(p.independent for p in self.parts)
+
+    @property
     def size(self):
         v = np.concatenate([p.vertices for p in self.parts])
         return tuple((v.max(axis=0) - v.min(axis=0)).tolist())

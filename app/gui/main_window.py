@@ -7,28 +7,14 @@ from PySide6.QtWidgets import (
 
 from app.gui.home_page import HomePage
 from app.gui.shape_page import ShapePage
-from app.gui.widgets import page_layout
 from app.utils.paths_util import APP_NAME, LOGO_PNG
 from app.utils.update_util import get_local_info
 
-# (clave, texto) de cada sección. Las futuras fases se añaden aquí.
+# (clave, texto) de cada sección. Las futuras secciones se añaden aquí y en PAGES.
 SECTIONS = [
     ("home", "Inicio"),
-    ("shape", "Forma"),
-    ("texture", "Texturas"),
-    ("collision", "Colisión"),
-    ("rig", "Esqueleto"),
-    ("viewer", "Visor 3D"),
+    ("shape", "Crear con IA"),
 ]
-
-
-class PlaceholderPage(QWidget):
-    def __init__(self, title: str):
-        super().__init__()
-        lay = page_layout(self, title)
-        lay.addStretch()
-        lay.addWidget(QLabel("Próximamente", objectName="Subtitle", alignment=Qt.AlignCenter))
-        lay.addStretch()
 
 
 class MainWindow(QMainWindow):
@@ -72,7 +58,7 @@ class MainWindow(QMainWindow):
             button.setCursor(Qt.PointingHandCursor)
             self.nav.addButton(button, index)
             side.addWidget(button)
-            page = HomePage(info) if key == "home" else ShapePage() if key == "shape" else PlaceholderPage(text)
+            page = HomePage(info) if key == "home" else ShapePage()
             self.pages[key] = page
             self.stack.addWidget(page)
         self.nav.idClicked.connect(self._show_section)

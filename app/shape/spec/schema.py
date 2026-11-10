@@ -361,10 +361,6 @@ class ObjectSpec:
         w, h = self.size(view)
         return (CANVAS / self.ppm - w) / 2, (CANVAS / self.ppm - h) / 2
 
-    @property
-    def has_skeleton(self):
-        return bool(self.marks.get("huesos"))
-
 
 def load_spec(source) -> ObjectSpec:
     """Lee el JSON (ruta o texto) y lo valida. Lanza SpecError con un mensaje claro si algo falla."""

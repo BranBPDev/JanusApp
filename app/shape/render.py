@@ -26,6 +26,7 @@ class Scene:
         self.base_color = self._face_colors()
         self.face_alpha = self._face_alphas()
         self.face_uv = self._face_uvs()
+        self.spread = self._spread()
         all_v = np.concatenate([self.posed(0.0)[0], self.posed(1.0)[0]])  # encuadre válido cerrado y abierto
         self.center = (all_v.min(axis=0) + all_v.max(axis=0)) / 2
         self.radius = float(np.linalg.norm(all_v - self.center, axis=1).max()) or 1.0
@@ -40,6 +41,20 @@ class Scene:
             return tex
         h, w = tex.shape[0] // k * k, tex.shape[1] // k * k
         return tex[:h, :w].astype(np.float32).reshape(h // k, k, w // k, k, 4).mean(axis=(1, 3)).astype(np.uint8)
+
+    def _spread(self):
+        """Desplazamiento (con t = 1) de cada pieza suelta: se alejan del centro del conjunto para poder verlas por separado."""
+        loose = [p for p in self.parts if p.independent]
+        if len(loose) < 2:
+            return {}
+        origins = np.array([p.origin for p in loose], np.float64)
+        v = np.concatenate([p.vertices for p in self.parts])
+        dist = 0.35 * float((v.max(axis=0) - v.min(axis=0)).max())
+        out = {}
+        for i, (p, d) in enumerate(zip(loose, origins - origins.mean(axis=0))):
+            norm = np.linalg.norm(d)
+            out[p.name] = (d / norm if norm > 1e-9 else np.array([0.0, 1.0 if i else -1.0, 0.0])) * dist
+        return out
 
     def _offsets(self):
         off, out = 0, []
@@ -97,12 +112,14 @@ class Scene:
         return (np.array([[scr[p], scr[i]] for p, i in links]) if links else np.zeros((0, 2, 2))), scr
 
     def posed(self, t: float, pose=None):
-        """Vértices y normales con la apertura t (0 = cerrado, 1 = abierto) y, si se da, la pose del esqueleto."""
+        """Vértices y normales con la apertura t (0 = cerrado/junto, 1 = abierto/separado) y, si se da, la pose del esqueleto."""
         verts, norms = [], []
         for p in self.parts:
             V, N = p.vertices.astype(np.float64), p.normals.astype(np.float64)
             if pose is not None and p.joints is not None:
                 V, N = skin_vertices(V, N, p.joints, p.weights.astype(np.float64), self.model.skeleton, pose)
+            if t > 0 and p.name in self.spread:
+                V = V + self.spread[p.name] * t
             node = p
             while node is not None:
                 if node.axis is not None and t > 0:

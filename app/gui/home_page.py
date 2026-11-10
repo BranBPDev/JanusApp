@@ -77,7 +77,7 @@ class HomePage(QWidget):
         text = QVBoxLayout()
         text.setSpacing(2)
         text.addWidget(QLabel(info.name, objectName="Brand"))
-        opens = " · se abre" if info.openable else ""
+        opens = " · se abre" if info.openable else " · se parte en dos objetos" if info.separable else ""
         text.addWidget(QLabel(f"{info.triangles:,} triángulos{opens} · {_date(info.updated)}", objectName="Muted"))
         h.addLayout(text, 1)
 

@@ -66,7 +66,8 @@ class ShapePage(QWidget):
         self.open_row = QWidget()
         orow = QHBoxLayout(self.open_row)
         orow.setContentsMargins(0, 0, 0, 0)
-        orow.addWidget(QLabel("Apertura"))
+        self.open_label = QLabel("Apertura")
+        orow.addWidget(self.open_label)
         self.open_slider = QSlider(Qt.Horizontal)
         self.open_slider.setRange(0, 100)
         self.open_slider.valueChanged.connect(lambda v: self.viewer.set_open(v / 100))
@@ -266,7 +267,9 @@ class ShapePage(QWidget):
             b.setEnabled(i < len(result.lods))
         self.lod_buttons[0].setChecked(True)
         self.open_slider.setValue(0)
-        self.open_row.setVisible(result.lods[0].openable)
+        lod0 = result.lods[0]
+        self.open_label.setText("Separación" if lod0.separable else "Apertura")
+        self.open_row.setVisible(lod0.openable or lod0.separable)
         self.rig_row.setVisible(result.lods[0].rigged)
         self._show_lod(0)
         if result.warnings:
@@ -279,7 +282,7 @@ class ShapePage(QWidget):
         self.viewer.set_model(model)
         self.viewer.set_open(self.open_slider.value() / 100)
         w, h, d = model.size
-        opens = (" · se abre" if model.openable else "") + (f" · esqueleto de {len(model.skeleton)} huesos" if model.rigged else "")
+        opens = (" · se abre" if model.openable else " · se parte en dos objetos" if model.separable else "") + (f" · esqueleto de {len(model.skeleton)} huesos" if model.rigged else "")
         if self.result.descriptor:
             kind = "Esfera" if self.result.descriptor["type"] == "sphere" else "Elipsoide"
             tex_in = self.result.descriptor.get("opening", {}) or {}
