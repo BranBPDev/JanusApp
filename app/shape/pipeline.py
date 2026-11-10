@@ -18,7 +18,7 @@ from app.shape.geometry.relief import body_core, to_extras
 from app.shape.geometry.qem import decimate
 from app.shape.geometry.surface_nets import surface_nets
 from app.shape.model import Model, Part
-from app.shape.rig.skeleton import attach_skeleton, build_skeleton, depth_finder, refine_mesh
+from app.shape.rig.skeleton import Skeleton, attach_skeleton, build_skeleton, depth_finder, refine_mesh
 from app.shape.spec.blueprint import Blueprint
 from app.shape.texture.atlas import Atlas
 from app.shape.texture.interior import Interior
@@ -270,10 +270,13 @@ def _mesh_object(bp, warnings, progress, t0):
                 for i, b in enumerate(m.get("back") or []):                  # «fondo»: se dibuja antes; la primera zona de la lista, la primera de todas
                     raised -= 6.0 * (len(m["back"]) - i) * (z == b)
             parts.append(Part(name, verts.astype(np.float32), faces, nrm.astype(np.float32), uv.astype(np.float32), raised=raised, **extra))
-        lods.append(Model(parts, tex))
+        model = Model(parts, tex)
+        lods.append(attach_skeleton(model, Skeleton.from_dict(m["skeleton"])) if m.get("skeleton") else model)
     info = {"mode": "malla", "primitive": None, "primitive_iou": 1.0, "openable": lods[0].openable, "separable": lods[0].separable, "watertight": bool(is_watertight(F)),
             "texture": [tex.shape[0], tex.shape[1]], "seconds": round(time.time() - t0, 2), "triangles": [m_.triangles for m_ in lods],
             "size": [round(x, 4) for x in lods[0].size], "metric": {"height_m": bp.dims_m[1], "width_m": bp.dims_m[0], "depth_m": bp.dims_m[2]}}
+    if m.get("skeleton"):
+        info["skeleton"] = {"joints": len(m["skeleton"]["joints"])}
     invoke_progress(progress, 0.92, "Modelo generado")
     return ShapeResult(lods=lods, warnings=warnings, info=info, marks=bp.marks.to_dict())
 

@@ -76,7 +76,7 @@ from pathlib import Path
 import numpy as np
 
 from app.shape.geometry.relief import KINDS as RELIEF_KINDS, MAX_CURVES, MAX_MESH, MAX_POINTS, PIECE_FORMS, SIGNED
-from app.shape.rig.skeleton import PALETTE
+from app.shape.rig.skeleton import MAX_JOINTS, PALETTE, bone_name
 
 FORMAT = "janus.objeto/1"
 CANVAS = 640                # lienzo de la vista previa (píxeles)
@@ -219,8 +219,10 @@ class ObjectSpec:
     def _check_mesh(m, textures):
         """«malla» (opcional): el modelo 3d tal cual, en metros con Y arriba, la base en y = 0 y el frente hacia +Z.
         {"vertices": [[x, y, z]…], "caras": [[i, j, k]…], "zonas": [zona de cada cara], "colores": [«#rrggbb» o nombre de una textura de color, de cada zona],
-        "partes": [pieza de cada cara: 0, 1, 2…], "bisagra": {"origen": [x, y, z], "eje": [x, y, z], "grados": -105}, "nombres_partes": [nombre de cada pieza]}
-        (las tres últimas, opcionales). Con «bisagra» hay dos piezas (0 = fija, 1 = móvil) y la móvil gira sobre el eje que pasa por «origen» hasta «grados»
+        "partes": [pieza de cada cara: 0, 1, 2…], "bisagra": {"origen": [x, y, z], "eje": [x, y, z], "grados": -105}, "nombres_partes": [nombre de cada pieza],
+        "esqueleto": {"huesos": [{"id": 0, "padre": null, "pos": [x, y, z]}, {"id": 1, "padre": 0, "pos": [x, y, z]}…]}}
+        (las cuatro últimas, opcionales). «esqueleto»: huesos en metros (mismas coordenadas que los vértices), el padre siempre antes que sus hijos y una sola raíz;
+        todos los vértices siguen a los huesos más cercanos, así el objeto se dobla (el palo de una caña de pescar). Con «bisagra» hay dos piezas (0 = fija, 1 = móvil) y la móvil gira sobre el eje que pasa por «origen» hasta «grados»
         (así se abre la tapa de un cofre). Sin «bisagra» cada pieza es un objeto suelto e independiente (un coco partido, un racimo de plátanos…)."""
         if m is None:
             return None
@@ -266,7 +268,28 @@ class ObjectSpec:
                         and len(set(part_names)) == len(part_names)):
                     raise SpecError("«malla»: «nombres_partes» debe tener un nombre distinto por pieza.")
         return {"vertices": V, "faces": F.astype(np.int32), "zones": zones, "colors": colors, "alphas": alphas, "raised": raised, "back": back,
-                "parts": parts, "hinge": hinge, "part_names": part_names}
+                "parts": parts, "hinge": hinge, "part_names": part_names, "skeleton": ObjectSpec._mesh_skeleton(m.get("esqueleto"))}
+
+    @staticmethod
+    def _mesh_skeleton(data):
+        """«esqueleto» de la malla -> {"joints": [{name, id, parent, position}]} (formato de Skeleton.from_dict) o None."""
+        if data is None:
+            return None
+        try:
+            bones = data["huesos"]
+            ids = [int(b["id"]) for b in bones]
+            ok = 0 < len(bones) <= MAX_JOINTS and len(set(ids)) == len(ids) and all(0 <= i < MAX_JOINTS for i in ids)
+            joints, seen = [], set()
+            for b, i in zip(bones, ids):
+                pos, parent = [float(c) for c in b["pos"]], b.get("padre")
+                ok = ok and len(pos) == 3 and (parent is None or int(parent) in seen) and (parent is None) == (not seen)   # padres antes que hijos, una raíz
+                joints.append({"name": bone_name(i), "id": i, "parent": None if parent is None else bone_name(int(parent)), "position": pos})
+                seen.add(i)
+        except Exception:
+            ok = False
+        if not ok:
+            raise SpecError("«malla.esqueleto»: «huesos» es una lista de {«id» (0-59), «padre» (id de un hueso anterior, null en el primero y solo en el primero), «pos» [x, y, z] en metros}.")
+        return {"joints": joints}
 
     def _check_reliefs(self):
         if not isinstance(self.reliefs, list):
