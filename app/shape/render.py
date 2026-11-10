@@ -145,9 +145,10 @@ class Scene:
         scr = np.stack([sx[f], sy_[f]], axis=2)
         return scr, vr[f][:, :, 2], nr[f]
 
-    def render(self, yaw, pitch, zoom, t, width, height, pose=None, ss=1):
+    def render(self, yaw, pitch, zoom, t, width, height, pose=None, ss=1, abort=None):
         """Imagen uint8 (alto,ancho,4) con alfa premultiplicado y fondo transparente, dibujada con z-buffer, y los triángulos visibles.
-        ss > 1 (entero): supermuestreo con suavizado de bordes; ss < 1: borrador a menor resolución (la imagen es más pequeña)."""
+        ss > 1 (entero): supermuestreo con suavizado de bordes; ss < 1: borrador a menor resolución (la imagen es más pequeña).
+        abort: función opcional; si devuelve True el dibujo se cancela y se devuelve (None, None)."""
         W, H = max(1, round(width * ss)), max(1, round(height * ss))
         P, Z, Nf = self.screen(yaw, pitch, zoom, t, width, height, pose, ss)
         geo = (P[:, 1, 0] - P[:, 0, 0]) * (P[:, 2, 1] - P[:, 0, 1]) - (P[:, 2, 0] - P[:, 0, 0]) * (P[:, 1, 1] - P[:, 0, 1])
@@ -157,7 +158,9 @@ class Scene:
         glass = np.nonzero((self.face_alpha < 0.999) & ~back)[0]
         color = np.zeros((W * H, 3))
         cover = np.zeros(W * H)
-        zbuf, idbuf = visibility(P[opaque], Z[opaque], W, H)
+        zbuf, idbuf = visibility(P[opaque], Z[opaque], W, H, abort)
+        if abort is not None and abort():
+            return None, None
         pix = np.nonzero(idbuf >= 0)[0]
         if len(pix):
             tri = opaque[idbuf[pix]]

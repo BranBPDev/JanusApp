@@ -67,11 +67,14 @@ def fragments(P, Z, width, height):
         i = j
 
 
-def visibility(P, Z, width, height, ids=None):
-    """Triángulo más cercano (mayor Z) de cada píxel: devuelve (zbuf (h*w), idbuf (h*w) con -1 donde no hay nada)."""
+def visibility(P, Z, width, height, abort=None):
+    """Triángulo más cercano (mayor Z) de cada píxel: devuelve (zbuf (h*w), idbuf (h*w) con -1 donde no hay nada).
+    abort: función opcional; si devuelve True se deja el cálculo a medias."""
     zbuf = np.full(width * height, -np.inf)
     idbuf = np.full(width * height, -1, np.int64)
     for pix, z, tri in fragments(P, Z, width, height):
+        if abort is not None and abort():
+            break
         o = np.lexsort((z, pix))
         pix, z, tri = pix[o], z[o], tri[o]
         last = np.ones(len(pix), bool)

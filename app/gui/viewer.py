@@ -1,4 +1,5 @@
 import threading
+import time
 
 import numpy as np
 from PySide6.QtCore import QPointF, QRect, Qt, QTimer, Signal
@@ -52,12 +53,40 @@ def render_thumbnail(model, max_side: int = 64, yaw: float = 0.5, pitch: float =
     return QPixmap.fromImage(image).scaled(max_side, max_side, Qt.KeepAspectRatio, Qt.SmoothTransformation)
 
 
+class _Latest:
+    """Hilo que solo ejecuta la última tarea pedida: las que no han empezado cuando llega otra se descartan."""
+
+    def __init__(self, fn):
+        self.fn = fn
+        self._lock = threading.Lock()
+        self._task = None
+        self._busy = False
+
+    def submit(self, *args):
+        with self._lock:
+            self._task = args
+            if self._busy:
+                return
+            self._busy = True
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def _run(self):
+        while True:
+            with self._lock:
+                task, self._task = self._task, None
+                if task is None:
+                    self._busy = False
+                    return
+            self.fn(*task)
+
+
 class MeshViewer(QWidget):
     """Visor por software con z-buffer: texturas, apertura de piezas, rotación con ratón y zoom con rueda.
-    La imagen se calcula siempre en un hilo aparte (la interfaz no se bloquea y solo se calcula la última vista pedida): primero
-    a resolución completa y, al parar, con suavizado de bordes. Mientras llega la nueva se sigue viendo la anterior, nunca una ampliada."""
+    Dos hilos independientes dibujan siempre la última vista pedida: uno rápido para seguir al ratón (su resolución se ajusta sola
+    a lo que tarde el equipo, hasta la completa) y otro que, al parar, la repite con suavizado de bordes y se cancela si te mueves."""
 
     _done = Signal(object, object)
+    FRAME = 0.09               # segundos que debe tardar como mucho un fotograma mientras se mueve
 
     def __init__(self):
         super().__init__()
@@ -72,16 +101,16 @@ class MeshViewer(QWidget):
         self._timer.timeout.connect(self._tick)
         self._settle = QTimer(self)
         self._settle.setSingleShot(True)
-        self._settle.setInterval(160)
+        self._settle.setInterval(120)
         self._settle.timeout.connect(self._refine)
         self._done.connect(self._ready)
         self._scene = None
         self._last = None
         self._shown = None         # (clave, supermuestreo, imagen) de lo último calculado
-        self._lock = threading.Lock()
-        self._pending = None       # petición de dibujo que espera al hilo
-        self._busy = False
-        self._asked = None         # (clave, supermuestreo) de la última petición
+        self._fast = _Latest(self._render)
+        self._fine = _Latest(self._render)
+        self._asked = {}           # hilo -> clave de la última petición
+        self._cost = 0.0           # segundos por fotograma a resolución completa (media)
         self._reset_view()
 
     def _reset_view(self):
@@ -95,7 +124,7 @@ class MeshViewer(QWidget):
 
     def set_model(self, model):
         self._scene = Scene(model) if model is not None else None
-        self._shown = self._asked = None
+        self._shown, self._asked = None, {}
         self._changed()
 
     def set_open(self, t: float):
@@ -125,40 +154,38 @@ class MeshViewer(QWidget):
         self.wireframe = on
         self._changed()
 
-    def _submit(self, ss):
-        """Pide dibujar la vista actual con supermuestreo ss; si el hilo está ocupado, la petición anterior se descarta."""
-        args = (self._key(), self._scene, self.yaw, self.pitch, self.zoom, self.open_t, self.width(), self.height(), self._pose(), ss)
-        if self._asked == (args[0], ss):
+    def _submit(self, worker, ss):
+        """Pide dibujar la vista actual con supermuestreo ss (si no se había pedido ya)."""
+        key = self._key()
+        if self._asked.get(worker) == (key, ss):
             return
-        self._asked = (args[0], ss)
-        with self._lock:
-            self._pending = args
-            if self._busy:
-                return
-            self._busy = True
-        threading.Thread(target=self._work, daemon=True).start()
+        self._asked[worker] = (key, ss)
+        cancel = (lambda: self._key() != key) if ss > 1 else None
+        worker.submit(key, self._scene, (self.yaw, self.pitch, self.zoom, self.open_t, self.width(), self.height()), self._pose(), ss, cancel)
 
-    def _work(self):
-        while True:
-            with self._lock:
-                args, self._pending = self._pending, None
-                if args is None:
-                    self._busy = False
-                    return
-            key, scene, *view, pose, ss = args
-            img, _ = scene.render(*view, pose, ss)
+    def _render(self, key, scene, view, pose, ss, cancel):
+        start = time.perf_counter()
+        img, _ = scene.render(*view, pose, ss, cancel)
+        if img is not None:
+            if ss <= 1:
+                self._cost = (time.perf_counter() - start) / ss ** 2 if not self._cost else 0.6 * self._cost + 0.4 * (time.perf_counter() - start) / ss ** 2
             self._done.emit((key, ss), to_qimage(img))
 
     def _ready(self, tag, image):
         key, ss = tag
-        if self._scene is not None and key[-1] == id(self._scene):
-            self._shown = (key, ss, image)
-            self.update()
+        if self._scene is None or key[-1] != id(self._scene) or (ss > 1 and key != self._key()):
+            return
+        self._shown = (key, ss, image)
+        self.update()
 
     def _refine(self):
         """Al parar: la misma vista con suavizado de bordes."""
         if self._scene is not None and not self.animate and self._shown is not None and self._shown[0] == self._key():
-            self._submit(2)
+            self._submit(self._fine, 1 if self._shown[1] < 1 else 2)
+
+    def _draft_scale(self):
+        """Resolución del fotograma rápido: la completa si el equipo la dibuja en FRAME segundos; si no, la que quepa."""
+        return 1.0 if self._cost <= self.FRAME else max(0.35, (self.FRAME / self._cost) ** 0.5)
 
     def paintEvent(self, _):
         p = QPainter(self)
@@ -176,9 +203,9 @@ class MeshViewer(QWidget):
             draw_wire(p, self._scene, visible, self.yaw, self.pitch, self.zoom, self.open_t, w, h, pose)
         else:
             if self._shown is None or self._shown[0] != key:
-                self._submit(1)
+                self._submit(self._fast, self._draft_scale())
             if self._shown is not None:
-                p.drawImage(0, 0, self._shown[2])
+                p.drawImage(self.rect(), self._shown[2])
                 if self._shown[0] == key and self._shown[1] < 2 and not self.animate:
                     self._settle.start()
         if self.bones:
