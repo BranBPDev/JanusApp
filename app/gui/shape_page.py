@@ -4,7 +4,7 @@ import numpy as np
 from PySide6.QtCore import Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import (
-    QButtonGroup, QCheckBox, QHBoxLayout, QLabel, QPushButton, QSlider, QVBoxLayout, QWidget,
+    QButtonGroup, QCheckBox, QComboBox, QHBoxLayout, QLabel, QPushButton, QSlider, QVBoxLayout, QWidget,
 )
 
 from app.gui.ai_chat import ChatPanel
@@ -82,6 +82,9 @@ class ShapePage(QWidget):
         self.animate_box = QCheckBox("Mover")
         self.animate_box.toggled.connect(self.viewer.set_animate)
         rrow.addWidget(self.animate_box)
+        self.clip_box = QComboBox()          # animaciones propias del objeto (lanzar, picar…)
+        self.clip_box.currentTextChanged.connect(lambda name: self.viewer.set_clip(name or None))
+        rrow.addWidget(self.clip_box)
         self.bones_box = QCheckBox("Ver huesos")
         self.bones_box.toggled.connect(self.viewer.set_bones)
         rrow.addWidget(self.bones_box)
@@ -271,6 +274,10 @@ class ShapePage(QWidget):
         self.open_label.setText("Separación" if lod0.separable else "Apertura")
         self.open_row.setVisible(lod0.openable or lod0.separable)
         self.rig_row.setVisible(result.lods[0].rigged)
+        clips = list(result.lods[0].skeleton.clips) if result.lods[0].rigged else []
+        self.clip_box.clear()
+        self.clip_box.addItems(clips)
+        self.clip_box.setVisible(bool(clips))
         self._show_lod(0)
         if result.warnings:
             self.warn.setText("\n".join(result.warnings))

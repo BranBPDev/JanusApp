@@ -93,7 +93,8 @@ class MeshViewer(QWidget):
         self.setMinimumSize(420, 320)
         self.wireframe = False
         self.open_t = 0.0
-        self.animate = False       # movimiento de prueba del esqueleto
+        self.animate = False       # movimiento del esqueleto
+        self.clip = None           # animación propia del objeto que se reproduce (None = movimiento de prueba genérico)
         self.bones = False         # dibuja los huesos encima
         self._phase = 0.0
         self._timer = QTimer(self)
@@ -139,16 +140,20 @@ class MeshViewer(QWidget):
             self._timer.stop()
         self._changed()
 
+    def set_clip(self, name):
+        self.clip, self._phase = name, 0.0
+        self._changed()
+
     def set_bones(self, on: bool):
         self.bones = on
         self.update()
 
     def _tick(self):
-        self._phase += 0.12
+        self._phase += 0.033 if self.clip else 0.12       # segundos de la animación / fase del movimiento genérico
         self._changed()
 
     def _pose(self):
-        return self._scene.pose(self._phase) if self.animate and self._scene is not None else None
+        return self._scene.pose(self._phase, self.clip) if self.animate and self._scene is not None else None
 
     def set_wireframe(self, on: bool):
         self.wireframe = on

@@ -1,5 +1,6 @@
 import io
 import json
+import math
 import struct
 from pathlib import Path
 
@@ -9,7 +10,7 @@ from PIL import Image
 from app.shape.geometry.mesh_ops import used_map
 from app.shape.model import Model, Part
 from app.shape.texture.sample import face_texels
-from app.shape.rig.skeleton import swing_pose
+from app.shape.rig.skeleton import CLIP_FPS, swing_pose
 
 
 def texture_png(texture: np.ndarray) -> bytes:
@@ -77,6 +78,43 @@ def _quaternion(axis, angle):
     a = np.asarray(axis, np.float64)
     a = a / max(np.linalg.norm(a), 1e-12)
     return [*(a * np.sin(angle / 2)).tolist(), float(np.cos(angle / 2))]
+
+
+def _matrix_quaternion(R):
+    """Cuaternión (x, y, z, w) de una matriz de rotación."""
+    w = math.sqrt(max(0.0, 1.0 + R[0, 0] + R[1, 1] + R[2, 2])) / 2
+    if w > 1e-6:
+        return [(R[2, 1] - R[1, 2]) / (4 * w), (R[0, 2] - R[2, 0]) / (4 * w), (R[1, 0] - R[0, 1]) / (4 * w), w]
+    i = int(np.argmax(np.diag(R)))
+    j, k = (i + 1) % 3, (i + 2) % 3
+    q = [0.0] * 4
+    q[i] = math.sqrt(max(0.0, 1 + R[i, i] - R[j, j] - R[k, k])) / 2
+    q[j], q[k], q[3] = (R[j, i] + R[i, j]) / (4 * q[i]), (R[k, i] + R[i, k]) / (4 * q[i]), (R[k, j] - R[j, k]) / (4 * q[i])
+    return q
+
+
+def _clip_animations(sk, nodes, joint_node, add_acc):
+    """Un clip del esqueleto -> una animación glTF (rotación y posición de los huesos animados, a CLIP_FPS fotogramas por segundo)."""
+    out = []
+    for name, clip in sk.clips.items():
+        n = max(2, int(round(clip.seconds * CLIP_FPS)) + 1)
+        times = np.linspace(0.0, clip.seconds, n).astype("<f4")
+        t_acc = add_acc(times.tobytes(), None, 5126, n, "SCALAR", min=[0.0], max=[float(times[-1])])
+        frames = [clip.sample(len(sk), float(t)) for t in times]
+        samplers, channels = [], []
+        for b, tr in clip.tracks.items():
+            for path, kind in (("rotation", "rot"), ("translation", "pos")):
+                if kind not in tr:
+                    continue
+                if kind == "rot":
+                    data, comp = np.array([_matrix_quaternion(f[0][b]) for f in frames], "<f4"), "VEC4"
+                else:
+                    base = np.asarray(nodes[joint_node[b]]["translation"])
+                    data, comp = np.array([base + f[1][b] for f in frames], "<f4"), "VEC3"
+                samplers.append({"input": t_acc, "output": add_acc(data.tobytes(), None, 5126, n, comp), "interpolation": "LINEAR"})
+                channels.append({"sampler": len(samplers) - 1, "target": {"node": joint_node[b], "path": path}})
+        out.append({"name": name, "samplers": samplers, "channels": channels})
+    return out
 
 
 def write_glb(path, model, name="objeto", animation=True):
@@ -174,7 +212,9 @@ def write_glb(path, model, name="objeto", animation=True):
         skin = {"joints": joint_node, "skeleton": joint_node[0],
                 "inverseBindMatrices": add_acc(ibm.astype("<f4").tobytes(), None, 5126, len(sk), "MAT4")}
         meta["skins"] = [skin]
-        if animation:
+        if animation and sk.clips:
+            meta["animations"] = _clip_animations(sk, nodes, joint_node, add_acc)
+        elif animation:
             n = ANIMATION["frames"]
             phases = np.arange(n + 1) / n * 2 * np.pi
             times = (np.arange(n + 1) / n * ANIMATION["seconds"]).astype("<f4")

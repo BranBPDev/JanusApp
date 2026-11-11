@@ -220,10 +220,13 @@ class ObjectSpec:
         """«malla» (opcional): el modelo 3d tal cual, en metros con Y arriba, la base en y = 0 y el frente hacia +Z.
         {"vertices": [[x, y, z]…], "caras": [[i, j, k]…], "zonas": [zona de cada cara], "colores": [«#rrggbb» o nombre de una textura de color, de cada zona],
         "partes": [pieza de cada cara: 0, 1, 2…], "bisagra": {"origen": [x, y, z], "eje": [x, y, z], "grados": -105}, "nombres_partes": [nombre de cada pieza],
-        "esqueleto": {"huesos": [{"id": 0, "padre": null, "pos": [x, y, z]}, {"id": 1, "padre": 0, "pos": [x, y, z]}…]}}
-        (las cuatro últimas, opcionales). «esqueleto»: huesos en metros (mismas coordenadas que los vértices), el padre siempre antes que sus hijos y una sola raíz;
-        todos los vértices siguen a los huesos más cercanos, así el objeto se dobla (el palo de una caña de pescar). Con «bisagra» hay dos piezas (0 = fija, 1 = móvil) y la móvil gira sobre el eje que pasa por «origen» hasta «grados»
-        (así se abre la tapa de un cofre). Sin «bisagra» cada pieza es un objeto suelto e independiente (un coco partido, un racimo de plátanos…)."""
+        "esqueleto": {"huesos": [{"id": 0, "padre": null, "pos": [x, y, z]}, {"id": 1, "padre": 0, "pos": [x, y, z], "rigido": 0.08}…],
+        "animaciones": {"lanzar": {"segundos": 2.2, "bucle": false, "huesos": {"0": {"rot": [[t, rx, ry, rz]…], "pos": [[t, dx, dy, dz]…]}}}}}}
+        (las cuatro últimas, opcionales). Con «bisagra» hay dos piezas (0 = fija, 1 = móvil) y la móvil gira sobre el eje que pasa por «origen» hasta «grados»
+        (así se abre la tapa de un cofre). Sin «bisagra» cada pieza es un objeto suelto e independiente (un coco partido, un racimo de plátanos…).
+        «esqueleto»: huesos en metros (mismas coordenadas que los vértices), el padre siempre antes que sus hijos y una sola raíz; «rigido» (radio en m): lo que quede a esa distancia del hueso lo sigue entero sin deformarse (una boya, un carrete);
+        todos los vértices siguen a los huesos más cercanos, así el objeto se dobla (el palo de una caña de pescar).
+        «animaciones» (opcional): clips con claves por hueso (id): «rot» = [t en s, grados X, Y, Z] (R = Rz·Ry·Rx) y «pos» = [t, dx, dy, dz] en metros respecto al reposo."""
         if m is None:
             return None
         try:
@@ -283,13 +286,42 @@ class ObjectSpec:
             for b, i in zip(bones, ids):
                 pos, parent = [float(c) for c in b["pos"]], b.get("padre")
                 ok = ok and len(pos) == 3 and (parent is None or int(parent) in seen) and (parent is None) == (not seen)   # padres antes que hijos, una raíz
-                joints.append({"name": bone_name(i), "id": i, "parent": None if parent is None else bone_name(int(parent)), "position": pos})
+                rigid = float(b.get("rigido", 0.0))
+                ok = ok and 0.0 <= rigid <= 2.0
+                joints.append({"name": bone_name(i), "id": i, "parent": None if parent is None else bone_name(int(parent)), "position": pos, "rigid": rigid})
                 seen.add(i)
         except Exception:
             ok = False
         if not ok:
-            raise SpecError("«malla.esqueleto»: «huesos» es una lista de {«id» (0-59), «padre» (id de un hueso anterior, null en el primero y solo en el primero), «pos» [x, y, z] en metros}.")
-        return {"joints": joints}
+            raise SpecError("«malla.esqueleto»: «huesos» es una lista de {«id» (0-59), «padre» (id de un hueso anterior, null en el primero y solo en el primero), «pos» [x, y, z] en metros, «rigido» (opcional, radio en metros)}.")
+        return {"joints": joints, "clips": ObjectSpec._mesh_clips(data.get("animaciones"), set(ids), {i: k for k, i in enumerate(ids)})}
+
+    @staticmethod
+    def _mesh_clips(data, ids, index):
+        """«animaciones» del esqueleto -> {nombre: {seconds, loop, bones:{índice: {rot, pos}}}} (formato de Clip.from_dict)."""
+        clips = {}
+        msg = "«malla.esqueleto.animaciones»: {nombre: {«segundos» (0-30), «bucle», «huesos»: {id: {«rot»/«pos»: [[t, x, y, z]…] con t creciente}}}}."
+        try:
+            for name, c in (data or {}).items():
+                seconds = float(c["segundos"])
+                if not (0 < seconds <= 30) or len(clips) >= 8:
+                    raise ValueError
+                bones = {}
+                for bid, tr in c["huesos"].items():
+                    if int(bid) not in ids:
+                        raise ValueError
+                    bones[str(index[int(bid)])] = {}
+                    for key in ("rot", "pos"):
+                        rows = [[float(v) for v in r] for r in tr.get(key, [])]
+                        times = [r[0] for r in rows]
+                        if len(rows) > 1200 or any(len(r) != 4 for r in rows) or times != sorted(times) or (times and (times[0] < 0 or times[-1] > seconds + 1e-6)):
+                            raise ValueError
+                        if rows:
+                            bones[str(index[int(bid)])][key] = rows
+                clips[str(name)[:40]] = {"seconds": seconds, "loop": bool(c.get("bucle", False)), "bones": bones}
+        except Exception:
+            raise SpecError(msg)
+        return clips
 
     def _check_reliefs(self):
         if not isinstance(self.reliefs, list):

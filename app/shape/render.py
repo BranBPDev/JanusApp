@@ -4,7 +4,7 @@ import numpy as np
 
 from app.shape.texture.sample import face_texels
 from app.shape.zbuffer import shade, visibility, fragments
-from app.shape.rig.skeleton import pose_frames, rotation_matrix, skin_vertices, swing_rotations
+from app.shape.rig.skeleton import clip_frames, pose_frames, rotation_matrix, skin_vertices, swing_rotations
 
 _LIGHT = np.array([-0.4, 0.6, 0.7]) / np.linalg.norm([-0.4, 0.6, 0.7])
 _DEFAULT = np.array([170.0, 178.0, 214.0])
@@ -27,7 +27,8 @@ class Scene:
         self.face_alpha = self._face_alphas()
         self.face_uv = self._face_uvs()
         self.spread = self._spread()
-        all_v = np.concatenate([self.posed(0.0)[0], self.posed(1.0)[0]])  # encuadre válido cerrado y abierto
+        poses = [None] + [clip_frames(self.model.skeleton, k, c.seconds * i / 8) for k, c in (self.model.skeleton.clips if self.model.rigged else {}).items() for i in range(9)]
+        all_v = np.concatenate([self.posed(t, pose)[0] for t in (0.0, 1.0) for pose in poses])  # encuadre válido cerrado, abierto y en cada animación
         self.center = (all_v.min(axis=0) + all_v.max(axis=0)) / 2
         self.radius = float(np.linalg.norm(all_v - self.center, axis=1).max()) or 1.0
 
@@ -92,10 +93,15 @@ class Scene:
             out.append(face_texels(tex, p.uvs, p.faces)[:, 3] / 255.0)
         return np.concatenate(out)
 
-    def pose(self, phase: float):
-        """Pose de prueba del esqueleto (movimiento genérico) para la fase dada, o None si el modelo no tiene esqueleto."""
+    def pose(self, phase: float, clip=None):
+        """Pose del esqueleto: en el instante 'phase' (s) de la animación 'clip' o, sin ella, el movimiento de prueba genérico
+        (fase en radianes). None si el modelo no tiene esqueleto."""
         sk = self.model.skeleton
-        return None if sk is None else pose_frames(sk, swing_rotations(sk, phase))
+        if sk is None:
+            return None
+        if clip in sk.clips:
+            return clip_frames(sk, clip, phase % (sk.clips[clip].seconds + 0.5))      # se repite con una pausa de medio segundo
+        return pose_frames(sk, swing_rotations(sk, phase))
 
     def joint_lines(self, yaw, pitch, zoom, t, width, height, pose=None):
         """Segmentos (padre -> hijo) de los huesos en pantalla, (k,2,2), y los puntos de las articulaciones (n,2)."""

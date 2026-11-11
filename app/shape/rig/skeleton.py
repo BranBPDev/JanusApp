@@ -25,12 +25,52 @@ TIP = 0.6               # prolongación del último hueso de cada rama (fracció
 
 
 # ---------------------------------------------------------------- esqueleto
+CLIP_FPS = 30           # fotogramas por segundo al exportar un clip
+
+
+class Clip:
+    """Animación con claves: por hueso, filas [t, x, y, z] de rotación (grados, R = Rz·Ry·Rx) y/o de desplazamiento local (metros)."""
+
+    def __init__(self, seconds, loop, tracks):
+        self.seconds, self.loop = float(seconds), bool(loop)
+        self.tracks = {int(b): {k: np.asarray(v, np.float64).reshape(-1, 4) for k, v in t.items() if len(v)} for b, t in tracks.items()}
+
+    @staticmethod
+    def _lerp(rows, t):
+        return np.array([np.interp(t, rows[:, 0], rows[:, c]) for c in (1, 2, 3)])
+
+    def sample(self, n, t):
+        """(rotaciones (n,3,3), desplazamientos (n,3)) de los n huesos en el instante t (segundos; se repite si hace bucle)."""
+        t = t % self.seconds if self.loop else min(max(t, 0.0), self.seconds)
+        rot, pos = np.tile(np.eye(3), (n, 1, 1)), np.zeros((n, 3))
+        for b, tr in self.tracks.items():
+            if b < n:
+                if "rot" in tr:
+                    rot[b] = euler_matrix(*self._lerp(tr["rot"], t))
+                if "pos" in tr:
+                    pos[b] = self._lerp(tr["pos"], t)
+        return rot, pos
+
+    def scaled(self, s):
+        return Clip(self.seconds, self.loop, {b: {k: v * [1, s, s, s] if k == "pos" else v for k, v in t.items()} for b, t in self.tracks.items()})
+
+    def to_dict(self):
+        return {"seconds": self.seconds, "loop": self.loop,
+                "bones": {str(b): {k: np.round(v, 5).tolist() for k, v in t.items()} for b, t in self.tracks.items()}}
+
+    @staticmethod
+    def from_dict(d):
+        return Clip(d["seconds"], d.get("loop", False), {int(b): t for b, t in d["bones"].items()})
+
+
 @dataclass
 class Skeleton:
     names: list
     parents: list           # índice del padre (-1 = raíz); los padres siempre van antes que sus hijos
     rest: np.ndarray        # (n,3) posición de cada articulación en reposo (espacio del modelo)
     ids: list = field(default_factory=list)    # número de articulación (color de la paleta) de cada hueso
+    clips: dict = field(default_factory=dict)  # nombre -> Clip (animaciones propias del objeto; sin ellas, movimiento de prueba genérico)
+    rigid: list = field(default_factory=list)  # radio (m) de cada hueso dentro del cual los vértices lo siguen por completo, sin deformarse (0 = no)
 
     def __len__(self):
         return len(self.names)
@@ -51,18 +91,23 @@ class Skeleton:
         return d
 
     def scaled(self, s):
-        return Skeleton(list(self.names), list(self.parents), np.asarray(self.rest, np.float64) * s, list(self.ids))
+        return Skeleton(list(self.names), list(self.parents), np.asarray(self.rest, np.float64) * s, list(self.ids), {k: c.scaled(s) for k, c in self.clips.items()}, [r * s for r in self.rigid])
 
     def to_dict(self):
-        return {"joints": [{"name": n, "id": i, "parent": None if p < 0 else self.names[p], "position": [round(float(v), 5) for v in r]}
-                           for n, i, p, r in zip(self.names, self.ids, self.parents, self.rest)]}
+        out = {"joints": [{"name": n, "id": i, "parent": None if p < 0 else self.names[p], "position": [round(float(v), 5) for v in r],
+                           **({"rigid": self.rigid[k]} if k < len(self.rigid) and self.rigid[k] > 0 else {})}
+                          for k, (n, i, p, r) in enumerate(zip(self.names, self.ids, self.parents, self.rest))]}
+        if self.clips:
+            out["clips"] = {k: c.to_dict() for k, c in self.clips.items()}
+        return out
 
     @staticmethod
     def from_dict(data):
         joints = data["joints"]
         index = {j["name"]: k for k, j in enumerate(joints)}
         return Skeleton([j["name"] for j in joints], [index[j["parent"]] if j["parent"] else -1 for j in joints],
-                        np.array([j["position"] for j in joints], np.float64), [j.get("id", k) for k, j in enumerate(joints)])
+                        np.array([j["position"] for j in joints], np.float64), [j.get("id", k) for k, j in enumerate(joints)],
+                        {k: Clip.from_dict(c) for k, c in data.get("clips", {}).items()}, [float(j.get("rigid", 0.0)) for j in joints])
 
 
 def bone_name(joint_id: int) -> str:
@@ -171,18 +216,31 @@ def rotation_matrix(axis, radians):
     return np.eye(3) + math.sin(radians) * k + (1 - math.cos(radians)) * (k @ k)
 
 
-def pose_frames(sk, local=None):
-    """Rotación y posición global de cada articulación. 'local' = (n,3,3) rotaciones locales (None = reposo)."""
+def euler_matrix(rx, ry, rz):
+    """Rotación Rz·Ry·Rx con ángulos en grados."""
+    return rotation_matrix([0, 0, 1], math.radians(rz)) @ rotation_matrix([0, 1, 0], math.radians(ry)) @ rotation_matrix([1, 0, 0], math.radians(rx))
+
+
+def pose_frames(sk, local=None, shift=None):
+    """Rotación y posición global de cada articulación. 'local' = (n,3,3) rotaciones locales (None = reposo);
+    'shift' = (n,3) desplazamiento local de cada articulación respecto a su padre (None = ninguno)."""
     n = len(sk)
     Rg, pg = np.empty((n, 3, 3)), np.empty((n, 3))
     for i, p in enumerate(sk.parents):
         R = np.eye(3) if local is None else local[i]
+        d = np.zeros(3) if shift is None else shift[i]
         if p < 0:
-            Rg[i], pg[i] = R, sk.rest[i]
+            Rg[i], pg[i] = R, sk.rest[i] + d
         else:
             Rg[i] = Rg[p] @ R
-            pg[i] = pg[p] + Rg[p] @ (sk.rest[i] - sk.rest[p])
+            pg[i] = pg[p] + Rg[p] @ (sk.rest[i] - sk.rest[p] + d)
     return Rg, pg
+
+
+def clip_frames(sk, name, t):
+    """Pose del esqueleto en el instante t (segundos) de su animación 'name'."""
+    rot, pos = sk.clips[name].sample(len(sk), t)
+    return pose_frames(sk, rot, pos)
 
 
 def skin_vertices(V, N, joints, weights, sk, frames):
@@ -268,6 +326,11 @@ def skin_weights(V, F, sk):
         np.add.at(acc, edges[:, 1], W[edges[:, 0]])
         W = np.where(deg[:, None] > 0, 0.5 * W + 0.5 * acc / np.maximum(deg[:, None], 1), W)
 
+    for j, radius in enumerate(sk.rigid):          # zonas rígidas (la boya, el carrete): siguen a su hueso sin deformarse
+        if radius > 0:
+            near = np.linalg.norm(P - sk.rest[j], axis=1) < radius
+            W[near] = 0.0
+            W[near, j] = 1.0
     k = min(INFLUENCES, J)
     top = np.argsort(-W, axis=1)[:, :k]
     w = np.take_along_axis(W, top, axis=1)
