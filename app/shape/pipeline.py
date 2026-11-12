@@ -259,9 +259,10 @@ def _mesh_object(bp, warnings, progress, t0):
     lods = []
     for li in range(len(LOD_TOLERANCE)):
         invoke_progress(progress, 0.3 + 0.55 * li / len(LOD_TOLERANCE), f"Construyendo LOD{li}...")
-        parts = []
+        parts, part_zones = [], []
         for name, lv, extra in split:
             v, f, z = lv[li]
+            part_zones.append(z)
             uvs = np.repeat(zone_uv[z][:, None, :], 3, axis=1)
             verts, faces, nrm, uv = build_attributes(v, f, crease_normals(v, f, 40.0), uvs)
             raised = None
@@ -271,7 +272,7 @@ def _mesh_object(bp, warnings, progress, t0):
                     raised -= 6.0 * (len(m["back"]) - i) * (z == b)
             parts.append(Part(name, verts.astype(np.float32), faces, nrm.astype(np.float32), uv.astype(np.float32), raised=raised, **extra))
         model = Model(parts, tex)
-        lods.append(attach_skeleton(model, Skeleton.from_dict(m["skeleton"])) if m.get("skeleton") else model)
+        lods.append(attach_skeleton(model, Skeleton.from_dict(m["skeleton"]), part_zones, list(m["colors"])) if m.get("skeleton") else model)
     info = {"mode": "malla", "primitive": None, "primitive_iou": 1.0, "openable": lods[0].openable, "separable": lods[0].separable, "watertight": bool(is_watertight(F)),
             "texture": [tex.shape[0], tex.shape[1]], "seconds": round(time.time() - t0, 2), "triangles": [m_.triangles for m_ in lods],
             "size": [round(x, 4) for x in lods[0].size], "metric": {"height_m": bp.dims_m[1], "width_m": bp.dims_m[0], "depth_m": bp.dims_m[2]}}
