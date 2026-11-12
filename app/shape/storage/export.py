@@ -93,34 +93,31 @@ def _matrix_quaternion(R):
     return q
 
 
-def _clip_animations(sk, nodes, joint_node, add_acc):
-    """Un clip del esqueleto -> una animación glTF (rotación y posición de los huesos animados, a CLIP_FPS fotogramas por segundo)."""
-    out = []
-    for name, clip in sk.clips.items():
-        n = max(2, int(round(clip.seconds * CLIP_FPS)) + 1)
-        times = np.linspace(0.0, clip.seconds, n).astype("<f4")
-        t_acc = add_acc(times.tobytes(), None, 5126, n, "SCALAR", min=[0.0], max=[float(times[-1])])
-        frames = [clip.sample(len(sk), float(t)) for t in times]
-        samplers, channels = [], []
+def write_clips(folder, skeleton, name="objeto"):
+    """Una animación por archivo (<clip>.anim.json), aparte del GLB: el modelo solo lleva malla, huesos y pesos y las animaciones se mandan solas.
+    Por hueso (nombre del GLB), a CLIP_FPS fotogramas por segundo: 'rot' = cuaternión local [x, y, z, w] y 'pos' = traslación local [x, y, z] (m)."""
+    n = len(skeleton)
+    for clip_name, clip in skeleton.clips.items():
+        count = max(2, int(round(clip.seconds * CLIP_FPS)) + 1)
+        frames = [clip.sample(n, i * clip.seconds / (count - 1)) for i in range(count)]
+        bones = {}
         for b, tr in clip.tracks.items():
-            for path, kind in (("rotation", "rot"), ("translation", "pos")):
-                if kind not in tr:
-                    continue
-                if kind == "rot":
-                    data, comp = np.array([_matrix_quaternion(f[0][b]) for f in frames], "<f4"), "VEC4"
-                else:
-                    base = np.asarray(nodes[joint_node[b]]["translation"])
-                    data, comp = np.array([base + f[1][b] for f in frames], "<f4"), "VEC3"
-                samplers.append({"input": t_acc, "output": add_acc(data.tobytes(), None, 5126, n, comp), "interpolation": "LINEAR"})
-                channels.append({"sampler": len(samplers) - 1, "target": {"node": joint_node[b], "path": path}})
-        out.append({"name": name, "samplers": samplers, "channels": channels})
-    return out
+            entry = {}
+            if "rot" in tr:
+                entry["rot"] = [[round(v, 5) for v in _matrix_quaternion(f[0][b])] for f in frames]
+            if "pos" in tr:
+                base = np.asarray(skeleton.rest[b]) - (np.asarray(skeleton.rest[skeleton.parents[b]]) if skeleton.parents[b] >= 0 else 0)
+                entry["pos"] = [[round(float(v), 5) for v in base + f[1][b]] for f in frames]
+            bones[skeleton.names[b]] = entry
+        data = {"formato": "janus.animacion/1", "objeto": name, "nombre": clip_name, "segundos": clip.seconds, "fps": CLIP_FPS, "fotogramas": count,
+                "bucle": clip.loop, "huesos": bones}
+        (Path(folder) / f"{clip_name}.anim.json").write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")
 
 
 def write_glb(path, model, name="objeto", animation=True):
     """glTF 2.0 binario: una malla por pieza, jerarquía de nodos con pivotes y una sola textura/material.
     Si el modelo tiene esqueleto: un nodo por hueso, 'skin' con sus matrices inversas, JOINTS_0/WEIGHTS_0 en las piezas
-    (con los vértices en reposo, sin pivote) y, si 'animation', un movimiento de prueba genérico."""
+    (con los vértices en reposo, sin pivote) y, si 'animation' y el objeto no tiene animaciones propias, un movimiento de prueba genérico."""
     buf = bytearray()
     views, accessors, meshes, nodes = [], [], [], [{"name": name, "children": []}]
 
@@ -212,9 +209,7 @@ def write_glb(path, model, name="objeto", animation=True):
         skin = {"joints": joint_node, "skeleton": joint_node[0],
                 "inverseBindMatrices": add_acc(ibm.astype("<f4").tobytes(), None, 5126, len(sk), "MAT4")}
         meta["skins"] = [skin]
-        if animation and sk.clips:
-            meta["animations"] = _clip_animations(sk, nodes, joint_node, add_acc)
-        elif animation:
+        if animation and not sk.clips:            # con animaciones propias el GLB no lleva ninguna: salen aparte (write_clips)
             n = ANIMATION["frames"]
             phases = np.arange(n + 1) / n * 2 * np.pi
             times = (np.arange(n + 1) / n * ANIMATION["seconds"]).astype("<f4")

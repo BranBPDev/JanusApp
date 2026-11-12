@@ -80,13 +80,18 @@ def referencias() -> dict:
 
 
 def referencia_objeto(nombre) -> dict:
-    """JSON del objeto de una referencia registrada."""
+    """JSON del objeto de una referencia registrada; sus animaciones (tabla animaciones: una fila por clip) se guardan aparte y se unen aquí."""
     import json
     con = sqlite3.connect(f"file:{CATALOG_DB.as_posix()}?mode=ro", uri=True)
     try:
         row = con.execute("SELECT objeto FROM referencias WHERE nombre = ?", (nombre,)).fetchone()
+        clips = con.execute("SELECT clip, datos FROM animaciones WHERE nombre = ? ORDER BY rowid", (nombre,)).fetchall() if \
+            con.execute("SELECT 1 FROM sqlite_master WHERE name = 'animaciones'").fetchone() else []
     finally:
         con.close()
     if not row:
         raise KeyError(nombre)
-    return json.loads(row[0])
+    data = json.loads(row[0])
+    if clips:
+        data["malla"]["esqueleto"]["animaciones"] = {clip: json.loads(datos) for clip, datos in clips}
+    return data

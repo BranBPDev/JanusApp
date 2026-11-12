@@ -8,7 +8,7 @@ from PIL import Image
 
 from app.shape.pipeline import ShapeResult
 from app.shape.rig.skeleton import Skeleton, attach_skeleton
-from app.shape.storage.export import read_obj, texture_png, write_glb, write_obj
+from app.shape.storage.export import read_obj, texture_png, write_clips, write_glb, write_obj
 from app.utils.json_util import read_json, save_json
 from app.utils.paths_util import PROJECTS_DIR
 from app.utils.pool_util import parallel_map
@@ -47,6 +47,8 @@ def save_shape(name: str, result: ShapeResult, source_text: str = None) -> Path:
         old.unlink()
     write_glb_levels = lambda item: write_glb(shape_dir / f"lod{item[0]}.glb", item[1], name)
     parallel_map(write_glb_levels, enumerate(result.lods))          # los LOD son independientes: se escriben a la vez
+    if result.lods[0].skeleton is not None and result.lods[0].skeleton.clips:
+        write_clips(shape_dir, result.lods[0].skeleton, name)           # <clip>.anim.json, aparte del GLB
     lods = [{"level": i, "glb": f"shape/lod{i}.glb", "triangles": m.triangles, "vertices": m.vertex_count}
             for i, m in enumerate(result.lods)]
     lod0 = result.lods[0]
@@ -66,7 +68,8 @@ def save_shape(name: str, result: ShapeResult, source_text: str = None) -> Path:
         "source": SOURCE if source_text is not None else manifest.get("source"),
         "annotations": result.marks,
         "shape": {"parts": parts, "lods": lods, "primitive_object": result.descriptor, **result.info,
-                  "skeleton": None if lod0.skeleton is None else lod0.skeleton.to_dict()},
+                  "skeleton": None if lod0.skeleton is None else lod0.skeleton.to_dict(clips=False),
+                  "clips": [] if lod0.skeleton is None else [f"shape/{k}.anim.json" for k in lod0.skeleton.clips]},
         "phases": {p: bool(phases.get(p, False)) for p in PHASES} | {"shape": True, "texture": lod0.texture is not None,
                                                                       "rig": lod0.skeleton is not None},
     })

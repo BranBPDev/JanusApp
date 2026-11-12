@@ -93,11 +93,11 @@ class Skeleton:
     def scaled(self, s):
         return Skeleton(list(self.names), list(self.parents), np.asarray(self.rest, np.float64) * s, list(self.ids), {k: c.scaled(s) for k, c in self.clips.items()}, [r * s for r in self.rigid])
 
-    def to_dict(self):
+    def to_dict(self, clips=True):
         out = {"joints": [{"name": n, "id": i, "parent": None if p < 0 else self.names[p], "position": [round(float(v), 5) for v in r],
                            **({"rigid": self.rigid[k]} if k < len(self.rigid) and self.rigid[k] > 0 else {})}
                           for k, (n, i, p, r) in enumerate(zip(self.names, self.ids, self.parents, self.rest))]}
-        if self.clips:
+        if clips and self.clips:
             out["clips"] = {k: c.to_dict() for k, c in self.clips.items()}
         return out
 
