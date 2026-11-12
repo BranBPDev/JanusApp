@@ -272,7 +272,7 @@ def _mesh_object(bp, warnings, progress, t0):
                     raised -= 6.0 * (len(m["back"]) - i) * (z == b)
             parts.append(Part(name, verts.astype(np.float32), faces, nrm.astype(np.float32), uv.astype(np.float32), raised=raised, **extra))
         model = Model(parts, tex)
-        lods.append(attach_skeleton(model, Skeleton.from_dict(m["skeleton"]), part_zones, list(m["colors"])) if m.get("skeleton") else model)
+        lods.append(attach_skeleton(model, Skeleton.from_dict(m["skeleton"]), part_zones, m["color_names"]) if m.get("skeleton") else model)
     info = {"mode": "malla", "primitive": None, "primitive_iou": 1.0, "openable": lods[0].openable, "separable": lods[0].separable, "watertight": bool(is_watertight(F)),
             "texture": [tex.shape[0], tex.shape[1]], "seconds": round(time.time() - t0, 2), "triangles": [m_.triangles for m_ in lods],
             "size": [round(x, 4) for x in lods[0].size], "metric": {"height_m": bp.dims_m[1], "width_m": bp.dims_m[0], "depth_m": bp.dims_m[2]}}

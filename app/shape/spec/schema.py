@@ -224,7 +224,7 @@ class ObjectSpec:
         "animaciones": {"lanzar": {"segundos": 2.2, "bucle": false, "huesos": {"0": {"rot": [[t, rx, ry, rz]…], "pos": [[t, dx, dy, dz]…]}}}}}}
         (las cuatro últimas, opcionales). Con «bisagra» hay dos piezas (0 = fija, 1 = móvil) y la móvil gira sobre el eje que pasa por «origen» hasta «grados»
         (así se abre la tapa de un cofre). Sin «bisagra» cada pieza es un objeto suelto e independiente (un coco partido, un racimo de plátanos…).
-        «esqueleto»: huesos en metros (mismas coordenadas que los vértices), el padre siempre antes que sus hijos y una sola raíz; «rigido» (radio en m): lo que quede a esa distancia del hueso lo sigue entero sin deformarse (una boya, un carrete); «solo» (nombres de textura): el hueso solo mueve esas zonas (el sedal, la boya);
+        «esqueleto»: huesos en metros (mismas coordenadas que los vértices), el padre siempre antes que sus hijos y una sola raíz; «rigido» (radio en m): lo que quede a esa distancia del hueso lo sigue entero sin deformarse (una boya, un carrete); «solo» (nombres de textura): el hueso solo mueve esas zonas (el sedal, la boya); «excepto»: zonas que el hueso nunca mueve;
         todos los vértices siguen a los huesos más cercanos, así el objeto se dobla (el palo de una caña de pescar).
         «animaciones» (opcional): clips con claves por hueso (id): «rot» = [t en s, grados X, Y, Z] (R = Rz·Ry·Rx) y «pos» = [t, dx, dy, dz] en metros respecto al reposo."""
         if m is None:
@@ -270,7 +270,7 @@ class ObjectSpec:
                 if not (isinstance(part_names, list) and len(part_names) == parts.max() + 1 and all(isinstance(n, str) and n.strip() for n in part_names)
                         and len(set(part_names)) == len(part_names)):
                     raise SpecError("«malla»: «nombres_partes» debe tener un nombre distinto por pieza.")
-        return {"vertices": V, "faces": F.astype(np.int32), "zones": zones, "colors": colors, "alphas": alphas, "raised": raised, "back": back,
+        return {"vertices": V, "faces": F.astype(np.int32), "zones": zones, "colors": colors, "color_names": [str(n) for n in names], "alphas": alphas, "raised": raised, "back": back,
                 "parts": parts, "hinge": hinge, "part_names": part_names, "skeleton": ObjectSpec._mesh_skeleton(m.get("esqueleto"))}
 
     @staticmethod
@@ -289,13 +289,14 @@ class ObjectSpec:
                 rigid = float(b.get("rigido", 0.0))
                 ok = ok and 0.0 <= rigid <= 2.0
                 solo = [str(n) for n in b.get("solo", [])]
-                ok = ok and len(solo) <= 16
-                joints.append({"name": bone_name(i), "id": i, "parent": None if parent is None else bone_name(int(parent)), "position": pos, "rigid": rigid, "solo": solo})
+                excl = [str(n) for n in b.get("excepto", [])]
+                ok = ok and len(solo) <= 16 and len(excl) <= 16
+                joints.append({"name": bone_name(i), "id": i, "parent": None if parent is None else bone_name(int(parent)), "position": pos, "rigid": rigid, "solo": solo, "excepto": excl})
                 seen.add(i)
         except Exception:
             ok = False
         if not ok:
-            raise SpecError("«malla.esqueleto»: «huesos» es una lista de {«id» (0-59), «padre» (id de un hueso anterior, null en el primero y solo en el primero), «pos» [x, y, z] en metros, «rigido» (opcional, radio en metros), «solo» (opcional, nombres de textura)}.")
+            raise SpecError("«malla.esqueleto»: «huesos» es una lista de {«id» (0-59), «padre» (id de un hueso anterior, null en el primero y solo en el primero), «pos» [x, y, z] en metros, «rigido» (opcional, radio en metros), «solo» y «excepto» (opcionales, nombres de textura)}.")
         return {"joints": joints, "clips": ObjectSpec._mesh_clips(data.get("animaciones"), set(ids), {i: k for k, i in enumerate(ids)})}
 
     @staticmethod

@@ -72,6 +72,7 @@ class Skeleton:
     clips: dict = field(default_factory=dict)  # nombre -> Clip (animaciones propias del objeto; sin ellas, movimiento de prueba genérico)
     rigid: list = field(default_factory=list)  # radio (m) de cada hueso dentro del cual los vértices lo siguen por completo, sin deformarse (0 = no)
     solo: list = field(default_factory=list)   # por hueso: nombres de las zonas (colores) a las que se limita su influencia; vacío = a todo
+    excl: list = field(default_factory=list)   # por hueso: nombres de las zonas (colores) que ese hueso no mueve nunca
 
     def __len__(self):
         return len(self.names)
@@ -92,12 +93,13 @@ class Skeleton:
         return d
 
     def scaled(self, s):
-        return Skeleton(list(self.names), list(self.parents), np.asarray(self.rest, np.float64) * s, list(self.ids), {k: c.scaled(s) for k, c in self.clips.items()}, [r * s for r in self.rigid], list(self.solo))
+        return Skeleton(list(self.names), list(self.parents), np.asarray(self.rest, np.float64) * s, list(self.ids), {k: c.scaled(s) for k, c in self.clips.items()}, [r * s for r in self.rigid], list(self.solo), list(self.excl))
 
     def to_dict(self, clips=True):
         out = {"joints": [{"name": n, "id": i, "parent": None if p < 0 else self.names[p], "position": [round(float(v), 5) for v in r],
                            **({"rigid": self.rigid[k]} if k < len(self.rigid) and self.rigid[k] > 0 else {}),
-                           **({"solo": list(self.solo[k])} if k < len(self.solo) and self.solo[k] else {})}
+                           **({"solo": list(self.solo[k])} if k < len(self.solo) and self.solo[k] else {}),
+                           **({"excepto": list(self.excl[k])} if k < len(self.excl) and self.excl[k] else {})}
                           for k, (n, i, p, r) in enumerate(zip(self.names, self.ids, self.parents, self.rest))]}
         if clips and self.clips:
             out["clips"] = {k: c.to_dict() for k, c in self.clips.items()}
@@ -109,7 +111,7 @@ class Skeleton:
         index = {j["name"]: k for k, j in enumerate(joints)}
         return Skeleton([j["name"] for j in joints], [index[j["parent"]] if j["parent"] else -1 for j in joints],
                         np.array([j["position"] for j in joints], np.float64), [j.get("id", k) for k, j in enumerate(joints)],
-                        {k: Clip.from_dict(c) for k, c in data.get("clips", {}).items()}, [float(j.get("rigid", 0.0)) for j in joints], [list(j.get("solo", [])) for j in joints])
+                        {k: Clip.from_dict(c) for k, c in data.get("clips", {}).items()}, [float(j.get("rigid", 0.0)) for j in joints], [list(j.get("solo", [])) for j in joints], [list(j.get("excepto", [])) for j in joints])
 
 
 def bone_name(joint_id: int) -> str:
@@ -314,7 +316,7 @@ def skin_weights(V, F, sk, face_zone=None, zone_names=None):
         ab = b - a
         t = np.clip(((P - a) @ ab) / max(float(ab @ ab), 1e-12), 0.0, 1.0)
         dist[:, j] = np.minimum(dist[:, j], np.linalg.norm(P - (a + t[:, None] * ab), axis=1))
-    if face_zone is not None and zone_names is not None and any(sk.solo):      # huesos limitados a ciertas zonas (el sedal, la boya)
+    if face_zone is not None and zone_names is not None and (any(sk.solo) or any(sk.excl)):      # huesos limitados a ciertas zonas (el sedal, la boya)
         zone_at = np.zeros((len(uniq), len(zone_names)), bool)
         for c in range(3):
             zone_at[inv[F[:, c]], np.asarray(face_zone)] = True
@@ -322,6 +324,10 @@ def skin_weights(V, F, sk, face_zone=None, zone_names=None):
             if names:
                 cols = [zone_names.index(nm) for nm in names if nm in zone_names]
                 dist[~zone_at[:, cols].any(axis=1) if cols else slice(None), j] = np.inf
+        for j, names in enumerate(sk.excl):
+            cols = [zone_names.index(nm) for nm in names if nm in zone_names]
+            if cols:
+                dist[zone_at[:, cols].any(axis=1), j] = np.inf
     lengths = [np.linalg.norm(sk.rest[i] - sk.rest[p]) for i, p in enumerate(sk.parents) if p >= 0]
     eps = 0.05 * (float(np.mean(lengths)) if lengths else 1.0)
     W = (((dist.min(axis=1, keepdims=True) + eps) / (dist + eps)) ** FALLOFF).astype(np.float32)
@@ -354,7 +360,7 @@ def skin_weights(V, F, sk, face_zone=None, zone_names=None):
 def refine_mesh(V, F, sk, iterations=5):
     """Divide por la mitad las aristas largas que quedan cerca de las articulaciones (sin mover ningún vértice), para que
     el modelo se doble bien al moverse. Lejos de las articulaciones la malla se queda como está."""
-    if face_zone is not None and zone_names is not None and any(sk.solo):      # huesos limitados a ciertas zonas (el sedal, la boya)
+    if face_zone is not None and zone_names is not None and (any(sk.solo) or any(sk.excl)):      # huesos limitados a ciertas zonas (el sedal, la boya)
         zone_at = np.zeros((len(uniq), len(zone_names)), bool)
         for c in range(3):
             zone_at[inv[F[:, c]], np.asarray(face_zone)] = True
@@ -362,6 +368,10 @@ def refine_mesh(V, F, sk, iterations=5):
             if names:
                 cols = [zone_names.index(nm) for nm in names if nm in zone_names]
                 dist[~zone_at[:, cols].any(axis=1) if cols else slice(None), j] = np.inf
+        for j, names in enumerate(sk.excl):
+            cols = [zone_names.index(nm) for nm in names if nm in zone_names]
+            if cols:
+                dist[zone_at[:, cols].any(axis=1), j] = np.inf
     lengths = [np.linalg.norm(sk.rest[i] - sk.rest[p]) for i, p in enumerate(sk.parents) if p >= 0]
     mean = float(np.mean(lengths)) if lengths else 1.0
     lo, hi = REFINE_MIN * mean, REFINE_MAX * mean
