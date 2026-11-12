@@ -1,0 +1,54 @@
+name: CI - Configuración del release
+
+# Lee version.json (configs del release + datos que se distribuyen) y los pasa al resto de workflows.
+on:
+  workflow_call:
+    outputs:
+      tag:
+        value: ${{ jobs.config.outputs.tag }}
+      name:
+        value: ${{ jobs.config.outputs.name }}
+      description:
+        value: ${{ jobs.config.outputs.description }}
+      prerelease:
+        value: ${{ jobs.config.outputs.prerelease }}
+      make_latest:
+        value: ${{ jobs.config.outputs.make_latest }}
+
+jobs:
+  config:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.cfg.outputs.tag }}
+      name: ${{ steps.cfg.outputs.name }}
+      description: ${{ steps.cfg.outputs.description }}
+      prerelease: ${{ steps.cfg.outputs.prerelease }}
+      make_latest: ${{ steps.cfg.outputs.make_latest }}
+    steps:
+      - name: Checkout Código
+        uses: actions/checkout@v4
+
+      - name: Extraer Configuración del Release
+        id: cfg
+        shell: pwsh
+        run: |
+          $json = Get-Content version.json -Raw | ConvertFrom-Json
+          $c = $json.configs
+          @(
+            "tag=$($c.tag)",
+            "name=$($c.name)",
+            "description=$($c.description)",
+            "prerelease=$($c.prerelease.ToString().ToLower())",
+            "make_latest=$($c.make_latest.ToString().ToLower())"
+          ) | Add-Content -Path $env:GITHUB_OUTPUT
+          New-Item -ItemType Directory -Force -Path out | Out-Null
+          $json.userjson | ConvertTo-Json | Out-File "out/version.json" -Encoding utf8
+
+      - name: Guardar version.json de distribución
+        uses: actions/upload-artifact@v4
+        with:
+          name: version-json
+          path: out/version.json
+          retention-days: 1

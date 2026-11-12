@@ -1,0 +1,37 @@
+name: CI - Compilar EXE
+
+# Compila JanusApp.exe con PyInstaller usando el entorno virtual que dejó ci-dependencias.yml.
+on:
+  workflow_call:
+
+jobs:
+  compilar:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout Código
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Restaurar entorno virtual
+        uses: actions/cache/restore@v4
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-py3.11-${{ hashFiles('requirements.txt') }}
+          fail-on-cache-miss: true
+
+      - name: Compilar EXE (PyInstaller)
+        run: .venv\Scripts\python -m PyInstaller --clean --noconfirm JanusApp.spec
+
+      - name: Guardar EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: janus-exe
+          path: dist/JanusApp.exe
+          retention-days: 1
+          if-no-files-found: error

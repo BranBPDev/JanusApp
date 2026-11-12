@@ -1,0 +1,42 @@
+name: CI - Preparar ZIP
+
+# Junta el EXE compilado y el version.json de distribución en JanusApp.zip.
+on:
+  workflow_call:
+
+jobs:
+  empaquetar:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Descargar EXE
+        uses: actions/download-artifact@v4
+        with:
+          name: janus-exe
+          path: dist
+
+      - name: Descargar version.json
+        uses: actions/download-artifact@v4
+        with:
+          name: version-json
+          path: meta
+
+      - name: Preparar ZIP Final
+        shell: pwsh
+        run: |
+          $out = "release_build"
+          New-Item -ItemType Directory -Force -Path "$out/app/data" | Out-Null
+          Copy-Item -Path "dist/JanusApp.exe" -Destination $out -Force
+          Copy-Item -Path "meta/version.json" -Destination "$out/app/data/version.json"
+          Compress-Archive -Path "$out/*" -DestinationPath "JanusApp.zip" -CompressionLevel NoCompression -Force
+
+      - name: Guardar ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: janus-zip
+          path: |
+            JanusApp.zip
+            meta/version.json
+          retention-days: 1
+          if-no-files-found: error

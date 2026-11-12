@@ -1,0 +1,35 @@
+name: CI - Python y dependencias
+
+# Configura Python 3.11 e instala requirements.txt en un entorno virtual que se guarda en caché:
+# el job de compilación lo restaura en vez de reinstalar. Si requirements.txt no cambia, no se reinstala nada.
+on:
+  workflow_call:
+
+jobs:
+  dependencias:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout Código
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Caché del entorno virtual
+        id: venv
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-py3.11-${{ hashFiles('requirements.txt') }}
+
+      - name: Instalar Dependencias
+        if: steps.venv.outputs.cache-hit != 'true'
+        run: |
+          python -m venv .venv
+          .venv\Scripts\python -m pip install --upgrade pip
+          .venv\Scripts\python -m pip install -r requirements.txt

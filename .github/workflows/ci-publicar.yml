@@ -1,0 +1,48 @@
+name: CI - Publicar release
+
+# Publica JanusApp.zip y version.json en GitHub Releases con los datos de configs (version.json).
+on:
+  workflow_call:
+    inputs:
+      tag:
+        type: string
+        required: true
+      name:
+        type: string
+        required: true
+      description:
+        type: string
+        default: ''
+      prerelease:
+        type: boolean
+        default: false
+      make_latest:
+        type: boolean
+        default: true
+
+jobs:
+  publicar:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Descargar ZIP y version.json
+        uses: actions/download-artifact@v4
+        with:
+          name: janus-zip
+          path: release
+
+      - name: Publicar en GitHub
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          name: ${{ inputs.name }}
+          body: ${{ inputs.description }}
+          prerelease: ${{ inputs.prerelease }}
+          make_latest: ${{ inputs.make_latest }}
+          files: |
+            release/JanusApp.zip
+            release/meta/version.json
+          overwrite: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
