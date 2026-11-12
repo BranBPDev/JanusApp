@@ -10,7 +10,7 @@ from PIL import Image
 from app.shape.geometry.mesh_ops import used_map
 from app.shape.model import Model, Part
 from app.shape.texture.sample import face_texels
-from app.shape.rig.skeleton import CLIP_FPS, swing_pose
+from app.shape.rig.skeleton import CLIP_FPS
 
 
 def texture_png(texture: np.ndarray) -> bytes:
@@ -71,15 +71,6 @@ def _pad(data: bytes, byte: bytes = b"\x00") -> bytes:
     return data + byte * (-len(data) % 4)
 
 
-ANIMATION = {"name": "demo_movimiento", "seconds": 2.0, "frames": 24}
-
-
-def _quaternion(axis, angle):
-    a = np.asarray(axis, np.float64)
-    a = a / max(np.linalg.norm(a), 1e-12)
-    return [*(a * np.sin(angle / 2)).tolist(), float(np.cos(angle / 2))]
-
-
 def _matrix_quaternion(R):
     """Cuaternión (x, y, z, w) de una matriz de rotación."""
     w = math.sqrt(max(0.0, 1.0 + R[0, 0] + R[1, 1] + R[2, 2])) / 2
@@ -114,10 +105,22 @@ def write_clips(folder, skeleton, name="objeto"):
         (Path(folder) / f"{clip_name}.anim.json").write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")
 
 
-def write_glb(path, model, name="objeto", animation=True):
+def _weights_u8(w):
+    """Pesos de piel en 8 bits normalizados (suma exacta 255 por vértice): 4× menos que float32."""
+    w = np.clip(np.asarray(w, np.float64), 0, None)
+    w = w / np.maximum(w.sum(axis=1, keepdims=True), 1e-12)
+    q = np.floor(w * 255).astype(np.int64)
+    rest = 255 - q.sum(axis=1)
+    order = np.argsort(-(w * 255 - q), axis=1)
+    for k in range(4):
+        q[np.arange(len(q)), order[:, k]] += (rest > k)
+    return q.astype("u1")
+
+
+def write_glb(path, model, name="objeto"):
     """glTF 2.0 binario: una malla por pieza, jerarquía de nodos con pivotes y una sola textura/material.
     Si el modelo tiene esqueleto: un nodo por hueso, 'skin' con sus matrices inversas, JOINTS_0/WEIGHTS_0 en las piezas
-    (con los vértices en reposo, sin pivote) y, si 'animation' y el objeto no tiene animaciones propias, un movimiento de prueba genérico."""
+    (con los vértices en reposo, sin pivote). El GLB no lleva animaciones ni metadatos: eso sale aparte (manifest.json, <clip>.anim.json)."""
     buf = bytearray()
     views, accessors, meshes, nodes = [], [], [], [{"name": name, "children": []}]
 
@@ -153,7 +156,7 @@ def write_glb(path, model, name="objeto", animation=True):
                  "NORMAL": add_acc(np.ascontiguousarray(p.normals, "<f4").tobytes(), 34962, 5126, len(local), "VEC3")}
         if rigged:
             attrs["JOINTS_0"] = add_acc(np.ascontiguousarray(p.joints, "u1").tobytes(), 34962, 5121, len(local), "VEC4")
-            attrs["WEIGHTS_0"] = add_acc(np.ascontiguousarray(p.weights, "<f4").tobytes(), 34962, 5126, len(local), "VEC4")
+            attrs["WEIGHTS_0"] = add_acc(_weights_u8(p.weights).tobytes(), 34962, 5121, len(local), "VEC4", normalized=True)
         if p.uvs is not None:
             attrs["TEXCOORD_0"] = add_acc(np.ascontiguousarray(p.uvs, "<f4").tobytes(), 34962, 5126, len(local), "VEC2")
         small = len(local) < 65536
@@ -185,8 +188,6 @@ def write_glb(path, model, name="objeto", animation=True):
             t = (origins[p.name] - parent_origin).tolist()
             if any(abs(c) > 1e-9 for c in t):
                 node["translation"] = t
-        if p.axis is not None:
-            node["extras"] = {"janus": {"axis": list(p.axis), "open_angle_deg": p.open_angle}}
         nodes.append(node)
         node_of[p.name] = len(nodes) - 1
     for p in model.parts:
@@ -199,7 +200,7 @@ def write_glb(path, model, name="objeto", animation=True):
     if not nodes[0].get("children"):
         nodes[0].pop("children", None)                  # glTF no admite una lista de hijos vacía
     meta = {
-        "asset": {"version": "2.0", "generator": "JanusApp"},
+        "asset": {"version": "2.0"},
         "scene": 0, "scenes": [{"nodes": [node_of[p.name] for p in model.parts] if loose else [0]}], "nodes": nodes, "meshes": meshes,
         "accessors": accessors,
     }
@@ -209,24 +210,6 @@ def write_glb(path, model, name="objeto", animation=True):
         skin = {"joints": joint_node, "skeleton": joint_node[0],
                 "inverseBindMatrices": add_acc(ibm.astype("<f4").tobytes(), None, 5126, len(sk), "MAT4")}
         meta["skins"] = [skin]
-        if animation and not sk.clips:            # con animaciones propias el GLB no lleva ninguna: salen aparte (write_clips)
-            n = ANIMATION["frames"]
-            phases = np.arange(n + 1) / n * 2 * np.pi
-            times = (np.arange(n + 1) / n * ANIMATION["seconds"]).astype("<f4")
-            t_acc = add_acc(times.tobytes(), None, 5126, n + 1, "SCALAR", min=[0.0], max=[float(times[-1])])
-            samplers, channels = [], []
-            tracks = [swing_pose(sk, ph) for ph in phases]
-            for i in range(1, len(sk)):
-                axis = tracks[0][0][i]
-                angles = [tr[1][i] for tr in tracks]
-                if max(abs(a) for a in angles) < 1e-6:
-                    continue
-                quats = np.array([_quaternion(axis, a) for a in angles], "<f4")
-                samplers.append({"input": t_acc, "output": add_acc(quats.tobytes(), None, 5126, n + 1, "VEC4"),
-                                 "interpolation": "LINEAR"})
-                channels.append({"sampler": len(samplers) - 1, "target": {"node": joint_node[i], "path": "rotation"}})
-            if channels:
-                meta["animations"] = [{"name": ANIMATION["name"], "samplers": samplers, "channels": channels}]
     if model.texture is not None:
         image_view = add_view(texture_png(model.texture))
         meta.update({
